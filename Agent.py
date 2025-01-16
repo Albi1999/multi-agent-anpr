@@ -170,6 +170,8 @@ class LicensePlateAgent:
 
     def contour_detection(self, image_path):
         """ Detect contours of an image (i.e. contours of the license plate)."""
+        # Inspired by :
+        # https://stackoverflow.com/questions/62295185/warping-a-license-plate-image-to-be-frontal-parallel
         # in OpenCV, finding contours is like finding white objects from a black background, thereore object should be white and background black
         # https://docs.opencv.org/4.x/d4/d73/tutorial_py_contours_begin.html
         # Therefore, first we need to convert the image to grayscale
@@ -177,7 +179,7 @@ class LicensePlateAgent:
         img = cv2.imread(image_path)
         og_img = img.copy()
         gray_image = self.grayscale(img)
-        contours, hierarchy = cv2.findContours(gray_image, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+        contours, _ = cv2.findContours(gray_image, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
         # Probably the correct contour (i.e. the one surrounding the whole license plate), should be the one that has the largest area
         biggest_area = 0 
         for idx, contour in enumerate(contours):
