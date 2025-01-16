@@ -138,6 +138,7 @@ class LicensePlateAgent:
         """Adjust the sharpness of an image."""
         enhancer = ImageEnhance.Sharpness(image)
         return enhancer.enhance(factor)
+    
 
     @staticmethod
     def edge_detection(image):
@@ -146,6 +147,82 @@ class LicensePlateAgent:
         bfilter = cv2.bilateralFilter(gray, 11, 17, 17)  # Noise reduction
         edges = cv2.Canny(bfilter, 100, 200)
         return edges
+
+
+
+    @staticmethod 
+    def order_points(pts):
+        """Order points in clockwise order starting from top-left"""
+        # Initialize ordered coordinates
+        rect = np.zeros((4, 2), dtype=np.float32)
+        # TODO : check if this universally works.. , I don't know 
+        s = pts.sum(axis=1)
+        rect[1] = pts[np.argmin(s)]  # top-right
+        rect[3] = pts[np.argmax(s)]  # bottom-left
+
+        diff = np.diff(pts, axis=1)
+        rect[0] = pts[np.argmin(diff)]  # top-left
+        rect[2] = pts[np.argmax(diff)]  # bottom-right
+
+        return rect
+
+
+
+    def contour_detection(self, image_path):
+        """ Detect contours of an image (i.e. contours of the license plate)."""
+        # in OpenCV, finding contours is like finding white objects from a black background, thereore object should be white and background black
+        # https://docs.opencv.org/4.x/d4/d73/tutorial_py_contours_begin.html
+        # Therefore, first we need to convert the image to grayscale
+        image_path = image_path or self.IMAGE_PATH
+        img = cv2.imread(image_path)
+        og_img = img.copy()
+        gray_image = self.grayscale(img)
+        contours, hierarchy = cv2.findContours(gray_image, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+        # Probably the correct contour (i.e. the one surrounding the whole license plate), should be the one that has the largest area
+        biggest_area = 0 
+        for idx, contour in enumerate(contours):
+            area = cv2.contourArea(contour)
+            # This we use to get the 4 corner points of our main contour (i.e. the one surrounding the whole license plate)
+            peri = cv2.arcLength(contour, True)
+            approx = cv2.approxPolyDP(contour,0.02*peri, True)
+            if area > biggest_area and len(approx) == 4:
+                biggest_area = area
+                license_cont  = approx # This stores the 4 corner points
+                biggest_contour_idx = idx # this index we need to then draw the contour onto the image
+
+        # Next, we want to warp that contour such that the license plat is flat and frontal parallel
+        if biggest_contour_idx is not None: # Check we actually found a contour
+       #     cv2.drawContours(img, contours, biggest_contour_idx, (255,0,0), 3)
+       #     cv2.imshow('Contour', img)
+       #     cv2.waitKey(0)
+       #     cv2.destroyAllWindows()
+
+            # Get the source points (i.e. the 4 corner points)
+            src = np.squeeze(license_cont).astype(np.float32)
+
+            height = og_img.shape[0] 
+            width = og_img.shape[1]
+            # Destination points (for flat parallel)
+            dst = np.float32([[0, 0], [0, height - 1], [width - 1, 0], [width - 1, height - 1]])
+
+            # Order the points correctly
+            license_cont = self.order_points(src)
+            dst = self.order_points(dst)
+
+            # Get the perspective transform
+            M = cv2.getPerspectiveTransform(src, dst)
+
+            # Warp the image
+            img_shape = (width, height)
+            enhanced_img = cv2.warpPerspective(og_img, M, img_shape, flags=cv2.INTER_LINEAR)
+
+            if not self.IS_IMAGE_PROCESSED:
+                self.IMAGE_PATH = image_path.replace(".png", "_processed.png")
+            cv2.imwrite(self.IMAGE_PATH, enhanced_img)
+            self.IS_IMAGE_PROCESSED = True
+            return self.IMAGE_PATH
+     
+
 
     def adjust_exposure_tool(self, factor: float = 1.0, image_path=None) -> str:
         """Adjusts the exposure of an image and saves it."""
@@ -221,7 +298,11 @@ class LicensePlateAgent:
 
 # Example usage
 if __name__ == "__main__":
-    SAMPLE_ID = 1
+    SAMPLE_ID = 2
     IMAGE_PATH = f'results/license_plates/license_plate.{SAMPLE_ID}.png'
+    IMAGE_PATH = f'VCS_Project/results/license_plates/license_plate.{SAMPLE_ID}.png' # TODO : uncomment, need it bc I am working on a virtual environment and don't want do add it to git 
     agent = LicensePlateAgent()
+    agent.contour_detection(IMAGE_PATH)
 
+
+   

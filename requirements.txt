@@ -1,0 +1,6 @@
+langchain
+langchain-ollama
+ollama
+pillow
+opencv-python
+numpy
