@@ -8,6 +8,7 @@ import base64
 import cv2
 import numpy as np
 import warnings
+import re 
 
 warnings.filterwarnings("ignore")
 
@@ -168,8 +169,8 @@ class LicensePlateAgent:
 
 
 
-    def contour_detection(self, image_path):
-        """ Detect contours of an image (i.e. contours of the license plate)."""
+    def perspective_correction(self, image_path):
+        """ Correct the perspective such that we get a flat and frontal parallel license plate by first finding the contour."""
         # Inspired by :
         # https://stackoverflow.com/questions/62295185/warping-a-license-plate-image-to-be-frontal-parallel
         # in OpenCV, finding contours is like finding white objects from a black background, thereore object should be white and background black
@@ -223,7 +224,69 @@ class LicensePlateAgent:
             cv2.imwrite(self.IMAGE_PATH, enhanced_img)
             self.IS_IMAGE_PROCESSED = True
             return self.IMAGE_PATH
-     
+
+    @staticmethod
+    def binning(numbers, bin_size = 10, max_bins = 10):
+        bins = {}
+        for num in numbers:
+            bin_index = num // bin_size
+            if bin_index in bins:
+                bins[bin_index].append(num)
+            else:
+                if len(bins) < max_bins:
+                    bins[bin_index] = [num]
+                else:
+                    # Get a list of the current bin indices
+                    bin_indices = np.array(list(bins.keys()))
+                    # Find the closest bin index
+                    bin_index = bin_indices[np.abs(bin_indices- bin_index).argmin()]
+                    # Add the number to the closest bin
+                    bins[bin_index].append(num)
+
+        # Order bins by means of lists
+        bins = {k: v for k, v in sorted(bins.items(), key=lambda item: np.mean(item[1]))}
+
+        # Extract just the items 
+        bins = list(bins.values())
+
+        return bins
+
+
+    def segment_characters(self, image_path):
+        """Segment the characters of the license plate."""
+
+        # First, find contours of the license plate and figure out which ones are the ones of the single characters
+        image_path = image_path or self.IMAGE_PATH
+        # Regex to find the number in the image_path 
+        img_nmb = re.search(r'\d+', image_path).group() # since we only have one number, we can use group() to get the only match
+        img = cv2.imread(image_path)
+        og_img = img.copy()
+        # Convert to grayscale
+        gray_image = self.grayscale(img)
+        # Gaussian Blur to prepare for Canny Detection (i.e. more robust edge detection)
+        blurred = cv2.GaussianBlur(gray_image, (5, 5), 0)
+        # Canny Edge Detection
+        canny = cv2.Canny(blurred, 100, 200)
+        contours, _ = cv2.findContours(canny, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+
+
+        counter = 0
+        for contour in sorted(contours, key=lambda x: cv2.boundingRect(x)[0]):
+            x, y, w, h = cv2.boundingRect(contour)
+            # width to height ratio : width should be smaller than height, but not too small
+            # height to original height in image : we know that the letters will have less height than the whole 
+            # (cut out) license plate, so it is definitely smaller than some value (e.g. 0.5), but not too small, else 
+            # we get all the noise 
+            # also the total width should be small (as it just contains a single number)
+            # # TODO : possibly find better, non hard coded, values
+            if w/h > 0.1 and 0.2 < h/og_img.shape[0] < 0.8 and w < 0.2*og_img.shape[1]:  
+                reg_of_interest = og_img[y:y+h, x:x+w] # region of interest : the rectangle area that we found
+                cv2.imwrite(f"VCS_Project/results/license_plates/segmented_plate.{img_nmb}/character_{counter}.png", reg_of_interest)
+                counter += 1 
+
+
+         
+ 
 
 
     def adjust_exposure_tool(self, factor: float = 1.0, image_path=None) -> str:
@@ -300,11 +363,11 @@ class LicensePlateAgent:
 
 # Example usage
 if __name__ == "__main__":
-    SAMPLE_ID = 2
+    SAMPLE_ID = 1
     IMAGE_PATH = f'results/license_plates/license_plate.{SAMPLE_ID}.png'
     IMAGE_PATH = f'VCS_Project/results/license_plates/license_plate.{SAMPLE_ID}.png' # TODO : uncomment, need it bc I am working on a virtual environment and don't want do add it to git 
     agent = LicensePlateAgent()
-    agent.contour_detection(IMAGE_PATH)
+    agent.segment_characters(IMAGE_PATH)
 
 
    
