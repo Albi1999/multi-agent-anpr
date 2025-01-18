@@ -225,70 +225,89 @@ class LicensePlateAgent:
             self.IS_IMAGE_PROCESSED = True
             return self.IMAGE_PATH
 
-    @staticmethod
-    def binning(numbers, bin_size = 10, max_bins = 10):
-        bins = {}
-        for num in numbers:
-            bin_index = num // bin_size
-            if bin_index in bins:
-                bins[bin_index].append(num)
-            else:
-                if len(bins) < max_bins:
-                    bins[bin_index] = [num]
-                else:
-                    # Get a list of the current bin indices
-                    bin_indices = np.array(list(bins.keys()))
-                    # Find the closest bin index
-                    bin_index = bin_indices[np.abs(bin_indices- bin_index).argmin()]
-                    # Add the number to the closest bin
-                    bins[bin_index].append(num)
-
-        # Order bins by means of lists
-        bins = {k: v for k, v in sorted(bins.items(), key=lambda item: np.mean(item[1]))}
-
-        # Extract just the items 
-        bins = list(bins.values())
-
-        return bins
 
 
-    def segment_characters(self, image_path):
-        """Segment the characters of the license plate."""
 
-        # First, find contours of the license plate and figure out which ones are the ones of the single characters
+    def adaptive_thresholding(self, image_path, block_size = 25):
+        """Use adaptive thresholding on the LAB color space to make single characters clearer.
+           Especially helpful when the image is blurred. Currently tested on european license plates,
+           don't know about other ones yet."""
+
         image_path = image_path or self.IMAGE_PATH
         # Regex to find the number in the image_path 
         img_nmb = re.search(r'\d+', image_path).group() # since we only have one number, we can use group() to get the only match
         img = cv2.imread(image_path)
         og_img = img.copy()
+
+        # Convert to LAB color space
+        lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
+        
+        # Take L channel (lightness)
+        # This helps a lot, since the characters on the (european) license plates are usually black, thus have a low lightness
+        # that can be used to separate them from the background, even in blurry images
+        l_channel = lab[:,:,0]
+        
+        # Apply adaptive thresholding based on lightness
+        thresh = cv2.adaptiveThreshold(
+            l_channel,
+            255,
+            cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+            cv2.THRESH_BINARY_INV,
+            25,  # block size 
+            1   # constant subtracted from mean
+        )
+
+        cv2.imwrite(f"VCS_Project/results/license_plates/license_plate.{img_nmb}_adaptive_thresholding.png", thresh)
+
+
+
+    def character_segmentation(self, image_path):
+        """ Use contours on images to segment the characters of the license plate."""
+
+        image_path = image_path or self.IMAGE_PATH
+        # Regex to find the number in the image_path 
+        img_nmb = re.search(r'\d+', image_path).group() # since we only have one number, we can use group() to get the only match
+        img = cv2.imread(image_path)
+        og_img = img.copy()
+
         # Convert to grayscale
         gray_image = self.grayscale(img)
+
+        # TODO : kernel potentially needs to be adjusted ; it might make characters not recognizable anymore if too big
+        # also, sometimes kernel will prob. not be needed and then erosion is not necessary, since it makes the characters a bit less thick
+        # so we have to figure out a way to make this more robust
+        kernel = np.ones((2,2), np.uint8) 
+        # Erosion can help separate connected components (needed sometimes for the contours, because else it draws contours over multiple characters)
+        # basically makes  the characters a bit less thick (TODO : check if true)
+        eroded = cv2.erode(gray_image, kernel, iterations=1)
+        
+     #   cv2.imshow('Eroded', eroded)
+     #   cv2.waitKey(0)
+     #   cv2.destroyAllWindows()
+
         # Gaussian Blur to prepare for Canny Detection (i.e. more robust edge detection)
-        blurred = cv2.GaussianBlur(gray_image, (5, 5), 0)
+        blurred = cv2.GaussianBlur(eroded, (5, 5), 0)
         # Canny Edge Detection
         canny = cv2.Canny(blurred, 100, 200)
-        contours, _ = cv2.findContours(canny, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-
-
+ 
+        # use RETR_EXTERNAL, because with canny we else get 2 contours for each character
+        contours, _ = cv2.findContours(canny, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        cv2.drawContours(img, contours, -1, (255,0,0), 3)
         counter = 0
         for contour in sorted(contours, key=lambda x: cv2.boundingRect(x)[0]):
             x, y, w, h = cv2.boundingRect(contour)
-            # width to height ratio : width should be smaller than height, but not too small
-            # height to original height in image : we know that the letters will have less height than the whole 
-            # (cut out) license plate, so it is definitely smaller than some value (e.g. 0.5), but not too small, else 
-            # we get all the noise 
-            # also the total width should be small (as it just contains a single number)
-            # # TODO : possibly find better, non hard coded, values
-            if w/h > 0.1 and 0.2 < h/og_img.shape[0] < 0.8 and w < 0.2*og_img.shape[1]:  
+            # width to height ratio : the images of the characters will nearly always be highr than they are wide
+            # w > 10 & h > 10 : we don't want to save the small contours, since they are probably noise
+            # TODO : hardcoded, will probably not work for every license plate, we have to figure something out here
+            if  0.9 > w/h > 0.1 and w > 10 and h > 10: 
                 reg_of_interest = og_img[y:y+h, x:x+w] # region of interest : the rectangle area that we found
                 cv2.imwrite(f"VCS_Project/results/license_plates/segmented_plate.{img_nmb}/character_{counter}.png", reg_of_interest)
                 counter += 1 
 
 
+
          
  
-
-
     def adjust_exposure_tool(self, factor: float = 1.0, image_path=None) -> str:
         """Adjusts the exposure of an image and saves it."""
         image_path = image_path or self.IMAGE_PATH
@@ -367,7 +386,8 @@ if __name__ == "__main__":
     IMAGE_PATH = f'results/license_plates/license_plate.{SAMPLE_ID}.png'
     IMAGE_PATH = f'VCS_Project/results/license_plates/license_plate.{SAMPLE_ID}.png' # TODO : uncomment, need it bc I am working on a virtual environment and don't want do add it to git 
     agent = LicensePlateAgent()
-    agent.segment_characters(IMAGE_PATH)
+    agent.adaptive_thresholding(IMAGE_PATH)
+    agent.character_segmentation('VCS_Project/results/license_plates/license_plate.1_adaptive_thresholding.png')
 
 
    
