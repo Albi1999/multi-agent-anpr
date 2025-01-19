@@ -166,6 +166,29 @@ class LicensePlateAgent:
         rect[2] = pts[np.argmax(diff)]  # bottom-right
 
         return rect
+    
+    @staticmethod
+    def scale_and_resize(img, target_height=110):
+        # GERMAN LICENSE PLATES : 520mmx110mm 
+        """Scale and resize the license plate to the given dimensions.
+        Trial for German License Plates : If cropped correctly (so just the license plate),
+        I did a trial with target_height = 200, then segmenting characters and they all had
+        heights around roughly 140. This means the characters take 140/200 = 0.7 of the actual height
+        So if we want to do it like MNIST, they will have images of 28x28 where the actual number/letter
+        is around 20x20 and the rest is padding. So my idea is to keep the image kind of big here and in
+        the right aspect format (e.g. rescaling with target_height = 200, maybe change that) so that 
+        we have a reference point of license plates that are in the same size, and then when we extract the
+        characters, we can rescale them to 28x28 with 20x20 character and 4x4 padding."""
+
+        # Standard height for license plates while maintaining aspect ratio
+        target_height = 200  # pixels
+        aspect_ratio = img.shape[1] / img.shape[0]
+        target_width = int(target_height * aspect_ratio)
+        
+        # Resize while maintaining aspect ratio
+        resized_plate = cv2.resize(img, (target_width, target_height))
+        return resized_plate
+
 
 
 
@@ -228,16 +251,21 @@ class LicensePlateAgent:
 
 
 
-    def adaptive_thresholding(self, image_path, block_size = 25):
+    def adaptive_thresholding(self, image_path, block_size = 25, constant = 1, mode = 'original'):
         """Use adaptive thresholding on the LAB color space to make single characters clearer.
            Especially helpful when the image is blurred. Currently tested on european license plates,
            don't know about other ones yet."""
 
+        
         image_path = image_path or self.IMAGE_PATH
         # Regex to find the number in the image_path 
         img_nmb = re.search(r'\d+', image_path).group() # since we only have one number, we can use group() to get the only match
         img = cv2.imread(image_path)
-        og_img = img.copy()
+
+        if mode != 'original':
+            # This we will need for preparing inputs for the AE pipeline
+            img = self.scale_and_resize(img)
+        
 
         # Convert to LAB color space
         lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
@@ -253,16 +281,17 @@ class LicensePlateAgent:
             255,
             cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
             cv2.THRESH_BINARY_INV,
-            25,  # block size 
-            1   # constant subtracted from mean
+            block_size,  # block size 
+            constant   # constant subtracted from mean
         )
 
         cv2.imwrite(f"VCS_Project/results/license_plates/license_plate.{img_nmb}_adaptive_thresholding.png", thresh)
 
 
 
-    def character_segmentation(self, image_path):
-        """ Use contours on images to segment the characters of the license plate."""
+    def character_segmentation(self, image_path, kernel_size = (1,1)):
+        """ Use contours on images to segment the characters of the license plate.
+            Furthermore resizes the characters to 28x28 images, where the actual character is 20x20 and the rest is padding (like MNIST)."""
 
         image_path = image_path or self.IMAGE_PATH
         # Regex to find the number in the image_path 
@@ -276,7 +305,7 @@ class LicensePlateAgent:
         # TODO : kernel potentially needs to be adjusted ; it might make characters not recognizable anymore if too big
         # also, sometimes kernel will prob. not be needed and then erosion is not necessary, since it makes the characters a bit less thick
         # so we have to figure out a way to make this more robust
-        kernel = np.ones((2,2), np.uint8) 
+        kernel = np.ones(kernel_size, np.uint8) 
         # Erosion can help separate connected components (needed sometimes for the contours, because else it draws contours over multiple characters)
         # basically makes  the characters a bit less thick (TODO : check if true)
         eroded = cv2.erode(gray_image, kernel, iterations=1)
@@ -291,18 +320,45 @@ class LicensePlateAgent:
         canny = cv2.Canny(blurred, 100, 200)
  
         # use RETR_EXTERNAL, because with canny we else get 2 contours for each character
-        contours, _ = cv2.findContours(canny, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        contours, _ = cv2.findContours(canny, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
         cv2.drawContours(img, contours, -1, (255,0,0), 3)
+
         counter = 0
         for contour in sorted(contours, key=lambda x: cv2.boundingRect(x)[0]):
             x, y, w, h = cv2.boundingRect(contour)
             # width to height ratio : the images of the characters will nearly always be highr than they are wide
-            # w > 10 & h > 10 : we don't want to save the small contours, since they are probably noise
-            # TODO : hardcoded, will probably not work for every license plate, we have to figure something out here
-            if  0.9 > w/h > 0.1 and w > 10 and h > 10: 
-                reg_of_interest = og_img[y:y+h, x:x+w] # region of interest : the rectangle area that we found
-                cv2.imwrite(f"VCS_Project/results/license_plates/segmented_plate.{img_nmb}/character_{counter}.png", reg_of_interest)
-                counter += 1 
+            # w > 80 & h > 80 : we don't want to save the small contours, since they are probably noise
+            # TODO : hardcoded, BUT I think when the crops are more or less the same (so just the license plate) and I do the rescaling step
+            # in adaptive thresholding, then it should be fine
+
+            #The characters on GERMAN licence plates, as well as the narrow rim framing it, are black on a white background.
+            #  In standard size they are 75 mm (3 in) high, and 47.5 mm (1+7⁄8 in) wide for letters or 44.5 mm (1+3⁄4 in) wide for digits
+            # 47.5/75 = 0.6333, 44.5/75 = 0.5933
+            if  0.57 < w/h < 0.65 and w > 50 and h > 50: 
+                reg_of_interest = gray_image[y:y+h, x:x+w] # region of interest : the rectangle area that we found ; also take it from the original image!
+
+
+                
+                # Calculate scaling factor to fit in 20x20 box while maintaining aspect ratio
+                scale = min(20.0/w, 20.0/h)
+                new_w = int(w * scale)
+                new_h = int(h * scale)
+                
+                # Resize character to fit in 20x20 box
+                char_resized = cv2.resize(reg_of_interest, (new_w, new_h))
+                
+                # Create 28x28 blank (black) image
+                mnist_size = np.zeros((28, 28), dtype=np.uint8)
+                
+                # Calculate position to center character
+                x_offset = (28 - new_w) // 2
+                y_offset = (28 - new_h) // 2
+                
+                # Place character in center of 28x28 image
+                mnist_size[y_offset:y_offset+new_h, x_offset:x_offset+new_w] = char_resized
+
+                cv2.imwrite(f"VCS_Project/results/license_plates/segmented_plate.{img_nmb}/character_{counter}.png", mnist_size)
+                counter += 1
 
 
 
@@ -382,12 +438,12 @@ class LicensePlateAgent:
 
 # Example usage
 if __name__ == "__main__":
-    SAMPLE_ID = 1
+    SAMPLE_ID = 4
     IMAGE_PATH = f'results/license_plates/license_plate.{SAMPLE_ID}.png'
     IMAGE_PATH = f'VCS_Project/results/license_plates/license_plate.{SAMPLE_ID}.png' # TODO : uncomment, need it bc I am working on a virtual environment and don't want do add it to git 
     agent = LicensePlateAgent()
-    agent.adaptive_thresholding(IMAGE_PATH)
-    agent.character_segmentation('VCS_Project/results/license_plates/license_plate.1_adaptive_thresholding.png')
+    agent.adaptive_thresholding(IMAGE_PATH, block_size=111, constant=2, mode='processing')
+    agent.character_segmentation(f'VCS_Project/results/license_plates/license_plate.{SAMPLE_ID}_adaptive_thresholding.png')
 
 
    
