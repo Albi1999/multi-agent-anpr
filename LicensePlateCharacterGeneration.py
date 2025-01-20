@@ -103,6 +103,46 @@ def generate_single_character(char, font_path, image_size=(100,150)):
 
 
 
+
+def create_clean_variations(clean_image):
+    """Create slightly varied but still clean versions of the input image
+    
+    Args:
+        clean_image: PIL Image or np.array of the clean character
+        
+    Returns:
+        PIL Image of the slightly augmented version
+    """
+    # Convert to numpy array if not already
+    image = np.array(clean_image, dtype=np.uint8)
+    
+    # Define very mild augmentation pipeline
+    augmenter = iaa.Sequential([
+        # Slight perspective changes
+        iaa.Sometimes(0.5, iaa.PerspectiveTransform(scale=(0.01, 0.02))),
+        
+        # Minimal rotation
+        iaa.Sometimes(0.5, iaa.Rotate((-2, 2))),
+        
+        # Very slight scaling
+        iaa.Sometimes(0.5, iaa.Affine(
+            scale=(0.95, 1.05),
+            translate_percent={"x": (-0.02, 0.02), "y": (-0.02, 0.02)}
+        )),
+        
+        # Subtle thickness variations using elastic transformation
+        iaa.Sometimes(0.3, iaa.ElasticTransformation(alpha=(0.1, 0.5), sigma=(0.05, 0.1))),
+        
+        # Very mild brightness adjustment
+        iaa.Sometimes(0.3, iaa.Add((-10, 10)))
+    ])
+
+    # Apply augmentation
+    clean_variation = augmenter(image=image)
+    
+    return Image.fromarray(clean_variation)
+
+
 def create_augmented_pair(clean_image):
     """Create a noisy version of the input image that simulates real-world license plate conditions
     
@@ -311,6 +351,13 @@ def generate_dataset(output_dir, font_path):
         clean_image_processed.save(clean_dir + f'/{char}/' + f'{char}.png')
 
         for i in range(100):  # Generate 100 augmented versions of each character
+            # Generate clean variations
+            clean_variation = create_clean_variations(clean_image)
+            # Preprocess image
+            clean_variation_processed = preprocessing(clean_variation)
+            # Save images
+            clean_variation_processed.save(clean_dir + f'/{char}/' + f'{char}_{i}.png')
+
             # Generate corresponding noisy image
             noisy_image = create_augmented_pair(clean_image)
             # Preprocess image
