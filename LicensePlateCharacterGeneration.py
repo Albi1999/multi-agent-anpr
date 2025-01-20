@@ -1,5 +1,8 @@
 #also create characters where some parts of the character are missing , like top part of a N or something like that for training (more robustness)
 
+
+# !!! imgaug must be downloaded from this fork : https://github.com/marcown/imgaug
+
 from PIL import Image, ImageFont, ImageDraw
 import numpy as np
 import imgaug.augmenters as iaa
@@ -94,6 +97,133 @@ def generate_single_character(char, font_path, image_size=(100,150)):
     # Draw the character in black
     draw.text((x, y), char, font=font, fill='black')
 
+
+    return image
+
+
+
+
+def create_augmented_pair(clean_image):
+    """Create a noisy version of the input image that simulates real-world license plate conditions
+    
+    Args:
+        clean_image: PIL Image or np.array of the clean image
+        
+    Returns:
+        PIL Image of the augmented version
+    """
+    # Convert to numpy array if not already
+    image = np.array(clean_image)
+
+    
+    # Define augmentation pipeline
+    augmenter = iaa.Sequential([
+        # Camera and motion effects
+        iaa.Sometimes(0.8, iaa.OneOf([
+            # Motion blur for vehicle movement
+            iaa.MotionBlur(k=(7, 15), angle=(-45, 45)),
+            # Camera shake and focus issues
+            iaa.GaussianBlur(sigma=(0.5, 3.0)),
+            # Defocus blur
+            iaa.AverageBlur(k=(2, 5))
+        ])),
+        
+        # Perspective and distance variations
+        iaa.Sometimes(0.7, iaa.Sequential([
+            # More aggressive perspective changes
+            iaa.PerspectiveTransform(scale=(0.05, 0.15)),
+            # Slight rotations
+          #  iaa.Rotate((-5, 5)),
+            # Distance variations
+            iaa.Affine(scale=(0.8, 1.2))
+        ])),
+        
+        # Lighting and exposure effects
+        # I think they fuck up the picture too much, also don't know if it really makes sense on black/white images
+       # iaa.Sometimes(0.8, iaa.OneOf([
+            # Contrast changes
+       #     iaa.LinearContrast((0.6, 1.4)),
+            # Uneven lighting
+       #     iaa.SigmoidContrast(gain=(5, 10), cutoff=(0.3, 0.7))
+       # ])),
+        
+        # Image quality and noise
+        iaa.Sometimes(0.7, iaa.OneOf([
+            # Camera sensor noise
+            iaa.AdditiveGaussianNoise(scale=(0, 0.15 * 255)),
+            # Compression artifacts
+            iaa.JpegCompression(compression=(70, 90)),
+        ])),
+        
+        # Character degradation and occlusion
+        iaa.Sometimes(0.6, iaa.OneOf([
+            # Small occlusions
+            iaa.Dropout(p=(0.01, 0.1)),
+            # Larger occlusions
+            iaa.CoarseDropout(p=(0.02, 0.15), size_percent=(0.02, 0.05))
+        ])),
+        
+
+        # this is problematic bc it then doesn't find any contours sometimes
+       
+      #  # Weather effects (use sparingly)
+     #   iaa.Sometimes(0.3, iaa.OneOf([
+            # Light rain effect
+        #    iaa.RainLayer(
+        #        density=(0.1, 0.2),
+        #        density_uniformity=0.2,
+        #        drop_size=(0.01, 0.02),
+        #        drop_size_uniformity=0.1,
+        #        angle=(-15, 15),
+        #        speed=(0.1, 0.2),
+        ##        blur_sigma_fraction=(0.001, 0.001)
+         #   ),
+            # Light fog
+        #    iaa.Fog()
+       # ])),
+           
+    ])
+    
+    # Apply augmentation
+    noisy_image = augmenter(image=image)
+    
+    return Image.fromarray(noisy_image)
+
+
+'''
+def create_augmented_pair(clean_image):
+    """Create a noisy version of the input image
+       clean_image : np.array of the clean image"""
+
+    # Convert to numpy array
+    image = np.array(clean_image)
+
+    # Define augmentation pipeline
+    # TODO : research what is best here, we need to get it as close as possible to the real world 
+    augmenter = iaa.Sequential([
+        iaa.Sometimes(0.7, iaa.GaussianBlur(sigma=(0.5, 2.0))),
+        iaa.Sometimes(0.6, iaa.AdditiveGaussianNoise(scale=(0, 0.1 * 255))),
+        iaa.Sometimes(0.5, iaa.PerspectiveTransform(scale=(0.01, 0.1))),
+        iaa.Sometimes(0.3, iaa.MotionBlur(k=(3, 7)))
+    ])
+    
+    # Apply augmentation
+    noisy_image = augmenter(image=image)
+    return Image.fromarray(noisy_image)
+'''
+
+def create_directories(output_dir):
+    # Define character set (German license plates)
+    chars = list('ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789')
+    os.makedirs(output_dir + '/clean')
+    os.makedirs(output_dir + '/noisy')
+    for char in chars:
+        os.makedirs(output_dir + '/clean/' + char)
+        os.makedirs(output_dir + '/noisy/' + char)
+
+
+def preprocessing(image):
+
     image = np.array(image)
 
 
@@ -110,8 +240,14 @@ def generate_single_character(char, font_path, image_size=(100,150)):
    # cv2.imshow('img', image)
    # cv2.waitKey(0)
    # cv2.destroyAllWindows()
+
+   # Get all the areas of the contours
+    areas = [cv2.contourArea(contour) for contour in contours]
+    # Get the max area (since we have black surrounding and white character, the character will have the biggest area)
+    max_area = max(areas)
+
     
-    imgs = []
+    correct_img = None 
     for contour in sorted(contours, key=lambda x: cv2.boundingRect(x)[0]):
         x, y, w, h = cv2.boundingRect(contour)
         # width to height ratio : the images of the characters will nearly always be highr than they are wide
@@ -120,22 +256,27 @@ def generate_single_character(char, font_path, image_size=(100,150)):
         #The characters on GERMAN licence plates, as well as the narrow rim framing it, are black on a white background.
         #  In standard size they are 75 mm (3 in) high, and 47.5 mm (1+7⁄8 in) wide for letters or 44.5 mm (1+3⁄4 in) wide for digits
         # 47.5/75 = 0.6333, 44.5/75 = 0.5933
-     #   print(f'w/h : {w/h}')
-        if 0.57 < w/h < 0.65:
+
+
+        # We know that the character is centered, thus the middle of the rectangle that stems from the contour of the character
+        #  should have coordinates (50,75) (as the image is 100x150 in total size)
+   
+        area = cv2.contourArea(contour)
+        if area == max_area:
             reg_of_interest = image[y:y+h, x:x+w] # region of interest : the rectangle area that we found ; also take it from the original image!
 
-         #   print(f'shape of reg_of_interest : {reg_of_interest.shape}')
-
-
-
-            
+   
             # Calculate scaling factor to fit in 20x20 box while maintaining aspect ratio
             scale = min(20.0/w, 20.0/h)
             new_w = int(w * scale)
             new_h = int(h * scale)
             
             # Resize character to fit in 20x20 box
-            char_resized = cv2.resize(reg_of_interest, (new_w, new_h))
+            try:
+                char_resized = cv2.resize(reg_of_interest, (new_w, new_h))
+            except cv2.error as e:
+                print('Error resizing the image ; skipping this image :', e)
+                return None 
             
             # Create 28x28 blank (black) image
             mnist_size = np.zeros((28, 28), dtype=np.uint8)
@@ -146,42 +287,10 @@ def generate_single_character(char, font_path, image_size=(100,150)):
             
             # Place character in center of 28x28 image
             mnist_size[y_offset:y_offset+new_h, x_offset:x_offset+new_w] = char_resized
-            imgs.append(mnist_size)
+            correct_img = mnist_size
 
 
-    
-   # assert len(imgs) == 1, f"Expected 1 character, got {len(imgs)}" # TODO : sometimes 2 bc it returns the same one .... need some way to fix this for generation process
-    cv2.imwrite('/Users/marlon/Desktop/sem/vs/vs_proj/VCS_Project/data/synthetic/german_font/clean/B/B.png', imgs[0])
-    return imgs[0]
-
-
-def create_augmented_pair(clean_image):
-    """Create a noisy version of the input image"""
-    # Convert PIL to numpy array
-    img_array = np.array(clean_image)
-    
-    # Define augmentation pipeline
-    # TODO : research what is best here, we need to get it as close as possible to the real world 
-    augmenter = iaa.Sequential([
-        iaa.Sometimes(0.7, iaa.GaussianBlur(sigma=(0.5, 2.0))),
-        iaa.Sometimes(0.6, iaa.AdditiveGaussianNoise(scale=(0, 0.1 * 255))),
-        iaa.Sometimes(0.5, iaa.PerspectiveTransform(scale=(0.01, 0.1))),
-        iaa.Sometimes(0.3, iaa.MotionBlur(k=(3, 7)))
-    ])
-    
-    # Apply augmentation
-    noisy_image = augmenter(image=img_array)
-    return Image.fromarray(noisy_image)
-
-
-def create_directories(output_dir):
-    # Define character set (German license plates)
-    chars = list('ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789')
-    os.makedirs(output_dir + '/clean')
-    os.makedirs(output_dir + '/noisy')
-    for char in chars:
-        os.makedirs(output_dir + '/clean/' + char)
-        os.makedirs(output_dir + '/noisy/' + char)
+    return Image.fromarray(correct_img)
 
 
 def generate_dataset(output_dir, font_path):
@@ -197,92 +306,36 @@ def generate_dataset(output_dir, font_path):
 
         # Generate clean image (just one since it's always the same ; TODO : possibly in different sizes could help, since license plate may be from diff perspectives?)
         clean_image = generate_single_character(char, font_path)
-        clean_image.save(clean_dir + f'/{char}/' + f'{char}.png')
+        # Preprocess image
+        clean_image_processed = preprocessing(clean_image)
+        clean_image_processed.save(clean_dir + f'/{char}/' + f'{char}.png')
 
         for i in range(100):  # Generate 100 augmented versions of each character
             # Generate corresponding noisy image
             noisy_image = create_augmented_pair(clean_image)
+            # Preprocess image
+            noisy_image_processed = preprocessing(noisy_image)
             # Save images
-            noisy_image.save(noisy_dir + f'/{char}/' + f'{char}_{i}.png')
-
-
-def adaptive_thresholding(folder_path,block_size = 111):
-    """Needed to preprocess our synthetic data such that it will have the same format as the real data
-       that we will try to denoise.
-       
-    """
-
-    img = cv2.imread(folder_path + f'/{folder_path[-2]}.png')
-
-    # Convert to LAB color space
-    lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
-    
-    # Take L channel (lightness)
-    # This helps a lot, since the characters on the (european) license plates are usually black, thus have a low lightness
-    # that can be used to separate them from the background, even in blurry images
-    l_channel = lab[:,:,0]
-
-
-    # Apply adaptive thresholding based on lightness
-    thresh = cv2.adaptiveThreshold(
-        l_channel,
-        255,
-        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-        cv2.THRESH_BINARY_INV,
-        25,  # block size 
-        1   # constant subtracted from mean
-    )
-
-    cv2.imwrite(folder_path + f'/{folder_path[-2]}_adaptive.png', thresh)
-    
-
-  #  return thresh 
-
-
-def resizing(folder_path):
-    """Resize images in the style of MNIST : 20x20 for the character itself, 28x28 for the whole image"""
-    # Load image
-    img = cv2.imread(folder_path + f'/{folder_path[-2]}_adaptive.png', cv2.IMREAD_GRAYSCALE)
-    
-    # Find contours
-    contours, _ = cv2.findContours(img, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    
-    # Get bounding box of the contour
-    x, y, w, h = cv2.boundingRect(contours[0])
-    
-    # Crop image to bounding box
-    cropped_img = img[y:y+h, x:x+w]
-    
-    # Resize to 20x20
-    resized_img = cv2.resize(cropped_img, (20, 20))
-    
-    # Create blank 28x28 image
-    final_img = np.zeros((28, 28), dtype=np.uint8)
-    
-    # Calculate position to center the character
-    x_offset = (28 - 20) // 2
-    y_offset = (28 - 20) // 2
-    
-    # Insert character in the center of the blank image
-    final_img[y_offset:y_offset+20, x_offset:x_offset+20] = resized_img
-    
-    # Save final image
-    cv2.imwrite(folder_path + f'/{folder_path[-2]}_resized.png', final_img)
+            if noisy_image_processed is None:
+                continue
+            else:
+                noisy_image_processed.save(noisy_dir + f'/{char}/' + f'{char}_{i}.png')
 
 
 
 
 
-    
 
 
 
-#generate_single_character('B','/Users/marlon/Desktop/sem/vs/vs_proj/VCS_Project/fonts/FE-FONT.TTF')
+
+
+#img_b = generate_single_character('B','/Users/marlon/Desktop/sem/vs/vs_proj/VCS_Project/fonts/FE-FONT.TTF')
 
 #create_augmented_pair(img_A).show()
-create_directories('/Users/marlon/Desktop/sem/vs/vs_proj/VCS_Project/data/synthetic/german_font')
+#create_directories('/Users/marlon/Desktop/sem/vs/vs_proj/VCS_Project/data/synthetic/german_font')
 
-#generate_dataset('/Users/marlon/Desktop/sem/vs/vs_proj/VCS_Project/data/synthetic/german_font','/Users/marlon/Desktop/sem/vs/vs_proj/VCS_Project/fonts/FE-FONT.TTF')
+generate_dataset('/Users/marlon/Desktop/sem/vs/vs_proj/VCS_Project/data/synthetic/german_font','/Users/marlon/Desktop/sem/vs/vs_proj/VCS_Project/fonts/FE-FONT.TTF')
 
 #adaptive_thresholding('/Users/marlon/Desktop/sem/vs/vs_proj/VCS_Project/data/synthetic/german_font/clean/0/', '0')
 #cv2.waitKey(0)
