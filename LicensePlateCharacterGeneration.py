@@ -348,7 +348,7 @@ def generate_dataset(output_dir, font_path):
         clean_image = generate_single_character(char, font_path)
         # Preprocess image
         clean_image_processed = preprocessing(clean_image)
-        clean_image_processed.save(clean_dir + f'/{char}/' + f'{char}.png')
+        clean_image_processed.save(clean_dir + f'/{char}/' + f'{char}_original.png')
 
         for i in range(100):  # Generate 100 augmented versions of each character
             # Generate clean variations
@@ -358,15 +358,17 @@ def generate_dataset(output_dir, font_path):
             # Save images
             clean_variation_processed.save(clean_dir + f'/{char}/' + f'{char}_{i}.png')
 
-            # Generate corresponding noisy image
-            noisy_image = create_augmented_pair(clean_image)
-            # Preprocess image
-            noisy_image_processed = preprocessing(noisy_image)
+            # None logic needed bc sometimes the preprocessing function doesn't find any contours or gets some error ; in that case
+            # we just retry until we get no errors anymore 
+            noisy_image_processed = None 
+            while noisy_image_processed == None: 
+                # Generate corresponding noisy image
+                noisy_image = create_augmented_pair(clean_image)
+                # Preprocess image
+                noisy_image_processed = preprocessing(noisy_image)
+
             # Save images
-            if noisy_image_processed is None:
-                continue
-            else:
-                noisy_image_processed.save(noisy_dir + f'/{char}/' + f'{char}_{i}.png')
+            noisy_image_processed.save(noisy_dir + f'/{char}/' + f'{char}_{i}.png')
 
 
 
