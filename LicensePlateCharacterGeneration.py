@@ -143,6 +143,8 @@ def create_clean_variations(clean_image):
     return Image.fromarray(clean_variation)
 
 
+
+# TODO : remove some/add some, make pictures not that fucked up !!!
 def create_augmented_pair(clean_image):
     """Create a noisy version of the input image that simulates real-world license plate conditions
     
@@ -230,27 +232,6 @@ def create_augmented_pair(clean_image):
     return Image.fromarray(noisy_image)
 
 
-'''
-def create_augmented_pair(clean_image):
-    """Create a noisy version of the input image
-       clean_image : np.array of the clean image"""
-
-    # Convert to numpy array
-    image = np.array(clean_image)
-
-    # Define augmentation pipeline
-    # TODO : research what is best here, we need to get it as close as possible to the real world 
-    augmenter = iaa.Sequential([
-        iaa.Sometimes(0.7, iaa.GaussianBlur(sigma=(0.5, 2.0))),
-        iaa.Sometimes(0.6, iaa.AdditiveGaussianNoise(scale=(0, 0.1 * 255))),
-        iaa.Sometimes(0.5, iaa.PerspectiveTransform(scale=(0.01, 0.1))),
-        iaa.Sometimes(0.3, iaa.MotionBlur(k=(3, 7)))
-    ])
-    
-    # Apply augmentation
-    noisy_image = augmenter(image=image)
-    return Image.fromarray(noisy_image)
-'''
 
 def create_directories(output_dir):
     # Define character set (German license plates)
@@ -290,16 +271,6 @@ def preprocessing(image):
     correct_img = None 
     for contour in sorted(contours, key=lambda x: cv2.boundingRect(x)[0]):
         x, y, w, h = cv2.boundingRect(contour)
-        # width to height ratio : the images of the characters will nearly always be highr than they are wide
-        # w > 80 & h > 80 : we don't want to save the small contours, since they are probably noise
-
-        #The characters on GERMAN licence plates, as well as the narrow rim framing it, are black on a white background.
-        #  In standard size they are 75 mm (3 in) high, and 47.5 mm (1+7⁄8 in) wide for letters or 44.5 mm (1+3⁄4 in) wide for digits
-        # 47.5/75 = 0.6333, 44.5/75 = 0.5933
-
-
-        # We know that the character is centered, thus the middle of the rectangle that stems from the contour of the character
-        #  should have coordinates (50,75) (as the image is 100x150 in total size)
    
         area = cv2.contourArea(contour)
         if area == max_area:
@@ -328,6 +299,8 @@ def preprocessing(image):
             # Place character in center of 28x28 image
             mnist_size[y_offset:y_offset+new_h, x_offset:x_offset+new_w] = char_resized
             correct_img = mnist_size
+
+        
 
 
     return Image.fromarray(correct_img)
@@ -366,6 +339,21 @@ def generate_dataset(output_dir, font_path):
                 noisy_image = create_augmented_pair(clean_image)
                 # Preprocess image
                 noisy_image_processed = preprocessing(noisy_image)
+                # Additionally, we will do some checks to make sure our images are not too noisy!
+                # We saw both : images that basically are just a straight line for E, making it impossible to recognize it and
+                # images that have like just a white square in the middle, which is also not helpful
+                # Therefore, we try to remove these
+                clean_image_np = np.array(clean_image_processed)
+                noisy_image_np = np.array(noisy_image_processed)
+                black_pixels_clean = np.sum(clean_image_np == 0)
+                black_pixels_noisy = np.sum(noisy_image_np == 0)
+                ratio = black_pixels_noisy/black_pixels_clean
+
+                if ratio < 0.8 or ratio > 1.1: # hardcoded for now, also still some problematic images can get through
+                    noisy_image_processed = None 
+                    print('Image too noisy, retrying...')
+
+
 
             # Save images
             noisy_image_processed.save(noisy_dir + f'/{char}/' + f'{char}_{i}.png')
@@ -393,3 +381,4 @@ generate_dataset('/Users/marlon/Desktop/sem/vs/vs_proj/VCS_Project/data/syntheti
 
 
 
+# check average white level on img --> find threshold based on original image and then set a bit lower and remove images where nearly only black (i.e. too much noise to find anything helpful anyway)
