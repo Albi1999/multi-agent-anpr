@@ -170,6 +170,8 @@ def create_augmented_pair(clean_image):
             iaa.AverageBlur(k=(2, 5))
         ])),
         
+
+        # TODO : trial with taking this out or making much weaker 
         # Perspective and distance variations
         iaa.Sometimes(0.7, iaa.Sequential([
             # More aggressive perspective changes
@@ -177,7 +179,7 @@ def create_augmented_pair(clean_image):
             # Slight rotations
           #  iaa.Rotate((-5, 5)),
             # Distance variations
-            iaa.Affine(scale=(0.8, 1.2))
+            iaa.Affine(scale=(0.8, 1.2)) # TODO : fix 
         ])),
         
         # Lighting and exposure effects
@@ -345,13 +347,16 @@ def generate_dataset(output_dir, font_path):
                 # Therefore, we try to remove these
                 clean_image_np = np.array(clean_image_processed)
                 noisy_image_np = np.array(noisy_image_processed)
-                black_pixels_clean = np.sum(clean_image_np == 0)
+                black_pixels_clean = np.sum(clean_image_np == 0) # 0,1,2,3,4,5,6...
                 black_pixels_noisy = np.sum(noisy_image_np == 0)
                 ratio = black_pixels_noisy/black_pixels_clean
 
                 if ratio < 0.8 or ratio > 1.1: # hardcoded for now, also still some problematic images can get through
                     noisy_image_processed = None 
                     print('Image too noisy, retrying...')
+
+                # TODO : create a classification NN that classifies whether an image is too mucb noise (so trained on clean images & noisy images binary classification (i.e. sigmoid threshold))
+                # such that NN is called here every time and helps us in not having too noisy training examples later 
 
 
 
@@ -378,7 +383,3 @@ generate_dataset('/Users/marlon/Desktop/sem/vs/vs_proj/VCS_Project/data/syntheti
 #cv2.waitKey(0)
 #cv2.destroyAllWindows()
 
-
-
-
-# check average white level on img --> find threshold based on original image and then set a bit lower and remove images where nearly only black (i.e. too much noise to find anything helpful anyway)

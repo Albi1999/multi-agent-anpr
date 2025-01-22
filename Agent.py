@@ -327,7 +327,7 @@ class LicensePlateAgent:
         for contour in sorted(contours, key=lambda x: cv2.boundingRect(x)[0]):
             x, y, w, h = cv2.boundingRect(contour)
             # width to height ratio : the images of the characters will nearly always be highr than they are wide
-            # w > 80 & h > 80 : we don't want to save the small contours, since they are probably noise
+            # w > 80 & h > 80 : we don't want to save t–he small contours, since they are probably noise
             # TODO : hardcoded, BUT I think when the crops are more or less the same (so just the license plate) and I do the rescaling step
             # in adaptive thresholding, then it should be fine
 
@@ -442,8 +442,9 @@ if __name__ == "__main__":
     IMAGE_PATH = f'results/license_plates/license_plate.{SAMPLE_ID}.png'
     IMAGE_PATH = f'VCS_Project/results/license_plates/license_plate.{SAMPLE_ID}.png' # TODO : uncomment, need it bc I am working on a virtual environment and don't want do add it to git 
     agent = LicensePlateAgent()
-    agent.adaptive_thresholding(IMAGE_PATH, block_size=111, constant=2, mode='processing')
-    agent.character_segmentation(f'VCS_Project/results/license_plates/license_plate.{SAMPLE_ID}_adaptive_thresholding.png')
+    #agent.adaptive_thresholding(IMAGE_PATH, block_size=111, constant=2, mode='processing')
+    #agent.character_segmentation(f'VCS_Project/results/license_plates/license_plate.{SAMPLE_ID}_adaptive_thresholding.png')
+    agent.perspective_correction('/Users/marlon/Desktop/sem/vs/vs_proj/VCS_Project/results/license_plates/license_plate.2.png')
 
 
    
