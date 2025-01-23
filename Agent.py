@@ -9,6 +9,7 @@ import cv2
 import numpy as np
 import warnings
 import re 
+from sklearn.cluster import DBSCAN
 
 warnings.filterwarnings("ignore")
 
@@ -156,14 +157,25 @@ class LicensePlateAgent:
         """Order points in clockwise order starting from top-left"""
         # Initialize ordered coordinates
         rect = np.zeros((4, 2), dtype=np.float32)
-        # TODO : check if this universally works.. , I don't know 
-        s = pts.sum(axis=1)
-        rect[1] = pts[np.argmin(s)]  # top-right
-        rect[3] = pts[np.argmax(s)]  # bottom-left
 
-        diff = np.diff(pts, axis=1)
-        rect[0] = pts[np.argmin(diff)]  # top-left
-        rect[2] = pts[np.argmax(diff)]  # bottom-right
+        # First, we need to understand which point is which
+        # For this, let us first order the points by their x coordinate 
+        pts_sorted_x = pts[pts[:,0].argsort()]
+        # We know that points 0 and 1 are the left points, and 2 and 3 are the right points
+        pair_left = pts_sorted_x[:2]
+        pair_right = pts_sorted_x[2:]
+        # Now we order these pairs by their y coordinate
+        # The top left point will have the highest y coordinate of pair_left
+        # The bottom left point will have the lowest y coordinate of pair_left
+        # same idea for right pair
+        pair_left_sorted_y = pair_left[pair_left[:,1].argsort()]
+        pair_right_sorted_y = pair_right[pair_right[:,1].argsort()]
+        rect[1] = pair_left_sorted_y[1]  # top-left
+        rect[3] = pair_right_sorted_y[1] # top-right
+        rect[0] = pair_left_sorted_y[0] # bottom-left
+        rect[2] = pair_right_sorted_y[0] # bottom-right
+    
+
 
         return rect
     
@@ -181,7 +193,6 @@ class LicensePlateAgent:
         characters, we can rescale them to 28x28 with 20x20 character and 4x4 padding."""
 
         # Standard height for license plates while maintaining aspect ratio
-        target_height = 200  # pixels
         aspect_ratio = img.shape[1] / img.shape[0]
         target_width = int(target_height * aspect_ratio)
         
@@ -191,101 +202,135 @@ class LicensePlateAgent:
 
 
 
+    def select_corners(self,image_path):
+        
+        img = self.scale_and_resize(cv2.imread(image_path))
+        src = []
+        
+        def mouse_callback(event, x, y, flags, param):
+            if event == cv2.EVENT_LBUTTONDOWN and len(src) < 4:
+                src.append([x, y])
+                # Draw circle at clicked point
+                cv2.circle(img_display, (x, y), 3, (0, 255, 0), -1)
+                cv2.imshow('Select Corners', img_display)
+
+        img = cv2.imread(image_path)
+        img_display = img.copy()
+        
+        cv2.namedWindow('Select Corners')
+        cv2.setMouseCallback('Select Corners', mouse_callback)
+        print("Click 4 corner points. Press 'r' to reset, 'Enter' when done")
+
+        while True:
+            cv2.imshow('Select Corners', img_display)
+            key = cv2.waitKey(1) & 0xFF
+            
+            if key == ord('r'):  # Reset
+                src.clear()
+                img_display = img.copy()
+                cv2.imshow('Select Corners', img_display)
+            
+            elif key == ord('f') and len(src) == 4:  # f key and 4 points selected
+                cv2.destroyAllWindows()
+                return np.float32(src)
+            
+            elif key == 27:  # ESC to cancel
+                cv2.destroyAllWindows()
+                break
+
 
     def perspective_correction(self, image_path):
-        """ Correct the perspective such that we get a flat and frontal parallel license plate by first finding the contour."""
-        # Inspired by :
-        # https://stackoverflow.com/questions/62295185/warping-a-license-plate-image-to-be-frontal-parallel
-        # in OpenCV, finding contours is like finding white objects from a black background, thereore object should be white and background black
-        # https://docs.opencv.org/4.x/d4/d73/tutorial_py_contours_begin.html
-        # Therefore, first we need to convert the image to grayscale
+
+
         image_path = image_path or self.IMAGE_PATH
-        img = cv2.imread(image_path)
-        og_img = img.copy()
-        gray_image = self.grayscale(img)
-        contours, _ = cv2.findContours(gray_image, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-        # Probably the correct contour (i.e. the one surrounding the whole license plate), should be the one that has the largest area
-        biggest_area = 0 
-        for idx, contour in enumerate(contours):
-            area = cv2.contourArea(contour)
-            # This we use to get the 4 corner points of our main contour (i.e. the one surrounding the whole license plate)
-            peri = cv2.arcLength(contour, True)
-            approx = cv2.approxPolyDP(contour,0.02*peri, True)
-            if area > biggest_area and len(approx) == 4:
-                biggest_area = area
-                license_cont  = approx # This stores the 4 corner points
-                biggest_contour_idx = idx # this index we need to then draw the contour onto the image
-
-        # Next, we want to warp that contour such that the license plat is flat and frontal parallel
-        if biggest_contour_idx is not None: # Check we actually found a contour
-       #     cv2.drawContours(img, contours, biggest_contour_idx, (255,0,0), 3)
-       #     cv2.imshow('Contour', img)
-       #     cv2.waitKey(0)
-       #     cv2.destroyAllWindows()
-
-            # Get the source points (i.e. the 4 corner points)
-            src = np.squeeze(license_cont).astype(np.float32)
-
-            height = og_img.shape[0] 
-            width = og_img.shape[1]
-            # Destination points (for flat parallel)
-            dst = np.float32([[0, 0], [0, height - 1], [width - 1, 0], [width - 1, height - 1]])
-
-            # Order the points correctly
-            license_cont = self.order_points(src)
-            dst = self.order_points(dst)
-
-            # Get the perspective transform
-            M = cv2.getPerspectiveTransform(src, dst)
-
-            # Warp the image
-            img_shape = (width, height)
-            enhanced_img = cv2.warpPerspective(og_img, M, img_shape, flags=cv2.INTER_LINEAR)
-
-            if not self.IS_IMAGE_PROCESSED:
-                self.IMAGE_PATH = image_path.replace(".png", "_processed.png")
-            cv2.imwrite(self.IMAGE_PATH, enhanced_img)
-            self.IS_IMAGE_PROCESSED = True
-            return self.IMAGE_PATH
+        og_img = cv2.imread(image_path)
+        src = self.select_corners(image_path)
 
 
+        # Get the source points (i.e. the 4 corner points)
+       # src = np.squeeze(license_cont).astype(np.float32)
 
+        height = og_img.shape[0] 
+        width = og_img.shape[1]
+        # Destination points (for flat parallel)
+        dst = np.float32([[0, 0], [0, height - 1], [width - 1, 0], [width - 1, height - 1]])
 
-    def adaptive_thresholding(self, image_path, block_size = 25, constant = 1, mode = 'original'):
-        """Use adaptive thresholding on the LAB color space to make single characters clearer.
-           Especially helpful when the image is blurred. Currently tested on european license plates,
-           don't know about other ones yet."""
+        # Order the points correctly
+        license_cont = self.order_points(src)
+     #   dst = self.order_points(dst)
 
+        # Get the perspective transform
+        M = cv2.getPerspectiveTransform(license_cont, dst)
+
+        # Warp the image
+        img_shape = (width, height)
+        enhanced_img = cv2.warpPerspective(og_img, M, img_shape, flags=cv2.INTER_LINEAR)
+
+        if not self.IS_IMAGE_PROCESSED:
+            self.IMAGE_PATH = image_path.replace(".png", "_processed.png")
+        cv2.imwrite(self.IMAGE_PATH, enhanced_img)
+        self.IS_IMAGE_PROCESSED = True
+        return self.IMAGE_PATH
+    
+
+    # TODO : understand, completely generated for now 
+    def adaptive_thresholding(self, image_path=None, img=None, block_size=25, constant=1, mode='original'):
+        current_thresh = None  # Store current threshold image
         
+        def on_change(_):
+            nonlocal current_thresh
+            block = cv2.getTrackbarPos('Block Size', 'Adjust Parameters') 
+            const = cv2.getTrackbarPos('Constant', 'Adjust Parameters')
+            block = block * 2 + 1
+            
+            if image_path is not None:
+                img_show = cv2.imread(image_path)
+            else:
+                img_show = img.copy()
+                
+            lab = cv2.cvtColor(img_show, cv2.COLOR_BGR2LAB)
+            l_channel = lab[:,:,0]
+            thresh = cv2.adaptiveThreshold(
+                l_channel, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                cv2.THRESH_BINARY_INV, block, const
+            )
+            current_thresh = thresh  # Update current threshold
+            cv2.imshow('Output', thresh)
+
+        cv2.namedWindow('Adjust Parameters')
+        cv2.namedWindow('Output')
+        print("Press 'f' when finished or 'ESC' to cancel")
+        
+        cv2.createTrackbar('Block Size', 'Adjust Parameters', (block_size-1)//2, 100, on_change)
+        cv2.createTrackbar('Constant', 'Adjust Parameters', constant, 50, on_change)
+
+        on_change(0)
+
+        while True:
+            key = cv2.waitKey(1) & 0xFF
+            if key == ord('f'):
+                cv2.destroyAllWindows()
+                return current_thresh
+            elif key == 27:  # ESC
+                cv2.destroyAllWindows()
+                break
+
+
+    def character_segmentation_DBSCAN(self, image_path):
+        """ Use DBSCAN to segment the characters of the license plate (after adaptive_thresholding)."""
         image_path = image_path or self.IMAGE_PATH
         # Regex to find the number in the image_path 
-        img_nmb = re.search(r'\d+', image_path).group() # since we only have one number, we can use group() to get the only match
-        img = cv2.imread(image_path)
+        img_nmb = re.search(r'\d+', image_path).group()
+        img = self.scale_and_resize(cv2.imread(image_path))
+        img = self.adaptive_thresholding(img=img)
+        cv2.imshow('Adaptive Thresholding', img)
+        cv2.waitKey(0)
+        cv2.destroyAllWindows()
 
-        if mode != 'original':
-            # This we will need for preparing inputs for the AE pipeline
-            img = self.scale_and_resize(img)
-        
+        # Apply DBSCAN
 
-        # Convert to LAB color space
-        lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
-        
-        # Take L channel (lightness)
-        # This helps a lot, since the characters on the (european) license plates are usually black, thus have a low lightness
-        # that can be used to separate them from the background, even in blurry images
-        l_channel = lab[:,:,0]
-        
-        # Apply adaptive thresholding based on lightness
-        thresh = cv2.adaptiveThreshold(
-            l_channel,
-            255,
-            cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-            cv2.THRESH_BINARY_INV,
-            block_size,  # block size 
-            constant   # constant subtracted from mean
-        )
 
-        cv2.imwrite(f"VCS_Project/results/license_plates/license_plate.{img_nmb}_adaptive_thresholding.png", thresh)
+
 
 
 
@@ -438,13 +483,17 @@ class LicensePlateAgent:
 
 # Example usage
 if __name__ == "__main__":
-    SAMPLE_ID = 4
+    SAMPLE_ID = 2
     IMAGE_PATH = f'results/license_plates/license_plate.{SAMPLE_ID}.png'
     IMAGE_PATH = f'VCS_Project/results/license_plates/license_plate.{SAMPLE_ID}.png' # TODO : uncomment, need it bc I am working on a virtual environment and don't want do add it to git 
+
     agent = LicensePlateAgent()
+   # agent.perspective_correction(IMAGE_PATH)
+    agent.character_segmentation_DBSCAN(IMAGE_PATH)
     #agent.adaptive_thresholding(IMAGE_PATH, block_size=111, constant=2, mode='processing')
     #agent.character_segmentation(f'VCS_Project/results/license_plates/license_plate.{SAMPLE_ID}_adaptive_thresholding.png')
-    agent.perspective_correction('/Users/marlon/Desktop/sem/vs/vs_proj/VCS_Project/results/license_plates/license_plate.2.png')
+  #  agent.perspective_correction('/Users/marlon/Desktop/sem/vs/vs_proj/VCS_Project/results/license_plates/license_plate.2.png')
+    
 
 
    

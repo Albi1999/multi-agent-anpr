@@ -5,3 +5,7 @@ pillow
 opencv-python
 numpy
 pandas
+yolov5
+matplotlib
+pygame
+nbimporter
