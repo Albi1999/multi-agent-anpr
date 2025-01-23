@@ -9,7 +9,7 @@ import cv2
 import numpy as np
 import warnings
 import re 
-from sklearn.cluster import DBSCAN
+import os 
 
 warnings.filterwarnings("ignore")
 
@@ -182,15 +182,7 @@ class LicensePlateAgent:
     @staticmethod
     def scale_and_resize(img, target_height=110):
         # GERMAN LICENSE PLATES : 520mmx110mm 
-        """Scale and resize the license plate to the given dimensions.
-        Trial for German License Plates : If cropped correctly (so just the license plate),
-        I did a trial with target_height = 200, then segmenting characters and they all had
-        heights around roughly 140. This means the characters take 140/200 = 0.7 of the actual height
-        So if we want to do it like MNIST, they will have images of 28x28 where the actual number/letter
-        is around 20x20 and the rest is padding. So my idea is to keep the image kind of big here and in
-        the right aspect format (e.g. rescaling with target_height = 200, maybe change that) so that 
-        we have a reference point of license plates that are in the same size, and then when we extract the
-        characters, we can rescale them to 28x28 with 20x20 character and 4x4 padding."""
+        """Scale and resize the license plate to the given dimensions."""
 
         # Standard height for license plates while maintaining aspect ratio
         aspect_ratio = img.shape[1] / img.shape[0]
@@ -202,9 +194,9 @@ class LicensePlateAgent:
 
 
 
-    def select_corners(self,image_path):
+    def select_corners(self,image):
         
-        img = self.scale_and_resize(cv2.imread(image_path))
+       # img = self.scale_and_resize(cv2.imread(image))
         src = []
         
         def mouse_callback(event, x, y, flags, param):
@@ -214,8 +206,8 @@ class LicensePlateAgent:
                 cv2.circle(img_display, (x, y), 3, (0, 255, 0), -1)
                 cv2.imshow('Select Corners', img_display)
 
-        img = cv2.imread(image_path)
-        img_display = img.copy()
+       # img = image
+        img_display = image.copy()
         
         cv2.namedWindow('Select Corners')
         cv2.setMouseCallback('Select Corners', mouse_callback)
@@ -227,7 +219,7 @@ class LicensePlateAgent:
             
             if key == ord('r'):  # Reset
                 src.clear()
-                img_display = img.copy()
+                img_display = image.copy()
                 cv2.imshow('Select Corners', img_display)
             
             elif key == ord('f') and len(src) == 4:  # f key and 4 points selected
@@ -239,12 +231,17 @@ class LicensePlateAgent:
                 break
 
 
-    def perspective_correction(self, image_path):
+    def perspective_correction(self, img=None, image_path=None):
 
+        if image_path is not None:
+            image_path = image_path or self.IMAGE_PATH
+            og_img = cv2.imread(image_path)
+        else:
+            og_img = img.copy()
 
-        image_path = image_path or self.IMAGE_PATH
-        og_img = cv2.imread(image_path)
-        src = self.select_corners(image_path)
+        
+        
+        src = self.select_corners(og_img)
 
 
         # Get the source points (i.e. the 4 corner points)
@@ -270,7 +267,7 @@ class LicensePlateAgent:
             self.IMAGE_PATH = image_path.replace(".png", "_processed.png")
         cv2.imwrite(self.IMAGE_PATH, enhanced_img)
         self.IS_IMAGE_PROCESSED = True
-        return self.IMAGE_PATH
+        return self.IMAGE_PATH, enhanced_img
     
 
     # TODO : understand, completely generated for now 
@@ -315,97 +312,133 @@ class LicensePlateAgent:
                 cv2.destroyAllWindows()
                 break
 
-
-    def character_segmentation_DBSCAN(self, image_path):
-        """ Use DBSCAN to segment the characters of the license plate (after adaptive_thresholding)."""
-        image_path = image_path or self.IMAGE_PATH
-        # Regex to find the number in the image_path 
-        img_nmb = re.search(r'\d+', image_path).group()
-        img = self.scale_and_resize(cv2.imread(image_path))
-        img = self.adaptive_thresholding(img=img)
-        cv2.imshow('Adaptive Thresholding', img)
-        cv2.waitKey(0)
-        cv2.destroyAllWindows()
-
-        # Apply DBSCAN
-
-
-
-
-
-
-    def character_segmentation(self, image_path, kernel_size = (1,1)):
-        """ Use contours on images to segment the characters of the license plate.
-            Furthermore resizes the characters to 28x28 images, where the actual character is 20x20 and the rest is padding (like MNIST)."""
-
-        image_path = image_path or self.IMAGE_PATH
-        # Regex to find the number in the image_path 
-        img_nmb = re.search(r'\d+', image_path).group() # since we only have one number, we can use group() to get the only match
-        img = cv2.imread(image_path)
-        og_img = img.copy()
-
-        # Convert to grayscale
-        gray_image = self.grayscale(img)
-
-        # TODO : kernel potentially needs to be adjusted ; it might make characters not recognizable anymore if too big
-        # also, sometimes kernel will prob. not be needed and then erosion is not necessary, since it makes the characters a bit less thick
-        # so we have to figure out a way to make this more robust
-        kernel = np.ones(kernel_size, np.uint8) 
-        # Erosion can help separate connected components (needed sometimes for the contours, because else it draws contours over multiple characters)
-        # basically makes  the characters a bit less thick (TODO : check if true)
-        eroded = cv2.erode(gray_image, kernel, iterations=1)
+    def paint_image(self, img):
+        drawing = False
+        last_point = None
+        img_display = img.copy()
         
-     #   cv2.imshow('Eroded', eroded)
-     #   cv2.waitKey(0)
-     #   cv2.destroyAllWindows()
-
-        # Gaussian Blur to prepare for Canny Detection (i.e. more robust edge detection)
-        blurred = cv2.GaussianBlur(eroded, (5, 5), 0)
-        # Canny Edge Detection
-        canny = cv2.Canny(blurred, 100, 200)
- 
-        # use RETR_EXTERNAL, because with canny we else get 2 contours for each character
-        contours, _ = cv2.findContours(canny, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-        cv2.drawContours(img, contours, -1, (255,0,0), 3)
-
-        counter = 0
-        for contour in sorted(contours, key=lambda x: cv2.boundingRect(x)[0]):
-            x, y, w, h = cv2.boundingRect(contour)
-            # width to height ratio : the images of the characters will nearly always be highr than they are wide
-            # w > 80 & h > 80 : we don't want to save t–he small contours, since they are probably noise
-            # TODO : hardcoded, BUT I think when the crops are more or less the same (so just the license plate) and I do the rescaling step
-            # in adaptive thresholding, then it should be fine
-
-            #The characters on GERMAN licence plates, as well as the narrow rim framing it, are black on a white background.
-            #  In standard size they are 75 mm (3 in) high, and 47.5 mm (1+7⁄8 in) wide for letters or 44.5 mm (1+3⁄4 in) wide for digits
-            # 47.5/75 = 0.6333, 44.5/75 = 0.5933
-            if  0.57 < w/h < 0.65 and w > 50 and h > 50: 
-                reg_of_interest = gray_image[y:y+h, x:x+w] # region of interest : the rectangle area that we found ; also take it from the original image!
-
-
+        def on_brush_change(_):
+            pass  # Just needed for trackbar creation
+        
+        def mouse_callback(event, x, y, flags, param):
+            nonlocal drawing, last_point
+            if drawing:
+                brush_size = cv2.getTrackbarPos('Brush Size', 'Paint')
+                if last_point is not None:
+                    cv2.line(img_display, last_point, (x, y), 0, brush_size*2)
+                cv2.circle(img_display, (x, y), brush_size, 0, -1)
+                last_point = (x, y)
+                cv2.imshow('Paint', img_display)
+            else:
+                last_point = None
                 
-                # Calculate scaling factor to fit in 20x20 box while maintaining aspect ratio
+        cv2.namedWindow('Paint')
+        cv2.createTrackbar('Brush Size', 'Paint', 10, 50, on_brush_change)
+        cv2.setMouseCallback('Paint', mouse_callback)
+        print("Hold 'd' to draw black, 'f' when finished, 'r' to reset")
+        
+        while True:
+            cv2.imshow('Paint', img_display)
+            key = cv2.waitKey(1) & 0xFF
+            
+            if key == ord('d'):
+                drawing = True
+            else:
+                drawing = False
+                
+            if key == ord('r'):
+                img_display = img.copy()
+            elif key == ord('f'):
+                cv2.destroyAllWindows()
+                return img_display
+            elif key == 27:
+                cv2.destroyAllWindows()
+                break
+
+
+    def character_segmentation(self, image_path, deviation=10):
+        image_path = image_path or self.IMAGE_PATH
+        img_nmb = re.search(r'\d+', image_path).group()
+
+        img = None
+        img_copy = None
+        points = []
+        counter = 0
+        
+        def process_and_display():
+            nonlocal img, img_copy
+            
+            img = self.scale_and_resize(cv2.imread(image_path))
+            _, img = self.perspective_correction(img=img, image_path=image_path)
+            img = self.adaptive_thresholding(img=img)
+            img = self.paint_image(img)
+            img = self.scale_and_resize(img)
+            img_copy = img.copy()
+            
+         #   img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
+          #  img = self.scale_and_resize(img)
+          #  img_copy = img.copy()
+            
+        process_and_display()
+        
+        def mouse_callback(event, x, y, flags, param):
+            nonlocal points, img_copy
+            
+            if event == cv2.EVENT_LBUTTONDOWN and len(points) < 4:
+                points.append((x, y))
+                cv2.circle(img_copy, (x, y), 3, (255,0, 0), -1)
+                
+                if len(points) == 4:
+                    points_arr = np.array(points)
+                    x_sorted = points_arr[np.argsort(points_arr[:, 0])]
+                    left = x_sorted[:2]
+                    right = x_sorted[2:]
+                    left = left[np.argsort(left[:, 1])]
+                    right = right[np.argsort(right[:, 1])]
+                    
+                    sorted_points = np.array([left[0], right[0], right[1], left[1]], dtype=np.int32)
+                    cv2.polylines(img_copy, [sorted_points], True, (255,0, 0), 2)
+                    
+        cv2.namedWindow('Select Characters')
+        cv2.setMouseCallback('Select Characters', mouse_callback)
+        
+        while True:
+            cv2.imshow('Select Characters', img_copy)
+            key = cv2.waitKey(1) & 0xFF
+            
+            if len(points) == 4 and key == ord('f'):
+                points_arr = np.array(points)
+                x = min(points_arr[:, 0])
+                y = min(points_arr[:, 1])
+                w = max(points_arr[:, 0]) - x
+                h = max(points_arr[:, 1]) - y
+                
+                roi = img[y:y+h, x:x+w]
                 scale = min(20.0/w, 20.0/h)
                 new_w = int(w * scale)
                 new_h = int(h * scale)
+                char_resized = cv2.resize(roi, (new_w, new_h))
                 
-                # Resize character to fit in 20x20 box
-                char_resized = cv2.resize(reg_of_interest, (new_w, new_h))
-                
-                # Create 28x28 blank (black) image
                 mnist_size = np.zeros((28, 28), dtype=np.uint8)
-                
-                # Calculate position to center character
                 x_offset = (28 - new_w) // 2
                 y_offset = (28 - new_h) // 2
-                
-                # Place character in center of 28x28 image
                 mnist_size[y_offset:y_offset+new_h, x_offset:x_offset+new_w] = char_resized
-
+                
+                os.makedirs(f"VCS_Project/results/license_plates/segmented_plate.{img_nmb}", exist_ok=True)
                 cv2.imwrite(f"VCS_Project/results/license_plates/segmented_plate.{img_nmb}/character_{counter}.png", mnist_size)
+                
                 counter += 1
-
-
+                points = []
+                process_and_display()
+                
+            elif key == 27:  # ESC
+                break
+                
+        cv2.destroyAllWindows()
+        return None
+        
+    
+        
 
          
  
@@ -483,13 +516,13 @@ class LicensePlateAgent:
 
 # Example usage
 if __name__ == "__main__":
-    SAMPLE_ID = 2
+    SAMPLE_ID = 1
     IMAGE_PATH = f'results/license_plates/license_plate.{SAMPLE_ID}.png'
-    IMAGE_PATH = f'VCS_Project/results/license_plates/license_plate.{SAMPLE_ID}.png' # TODO : uncomment, need it bc I am working on a virtual environment and don't want do add it to git 
+    IMAGE_PATH = f'VCS_Project/results/license_plates/license_plate.{SAMPLE_ID}_processed.png' # TODO : uncomment, need it bc I am working on a virtual environment and don't want do add it to git 
 
     agent = LicensePlateAgent()
    # agent.perspective_correction(IMAGE_PATH)
-    agent.character_segmentation_DBSCAN(IMAGE_PATH)
+    agent.character_segmentation(IMAGE_PATH)
     #agent.adaptive_thresholding(IMAGE_PATH, block_size=111, constant=2, mode='processing')
     #agent.character_segmentation(f'VCS_Project/results/license_plates/license_plate.{SAMPLE_ID}_adaptive_thresholding.png')
   #  agent.perspective_correction('/Users/marlon/Desktop/sem/vs/vs_proj/VCS_Project/results/license_plates/license_plate.2.png')
