@@ -504,7 +504,7 @@ class LicensePlateAgent:
 
 # Example usage
 if __name__ == "__main__":
-    SAMPLE_ID = 1
+    SAMPLE_ID = 2
     IMAGE_PATH = f'results/license_plates/license_plate.{SAMPLE_ID}.png'
     IMAGE_PATH = f'VCS_Project/results/license_plates/license_plate.{SAMPLE_ID}.png' # TODO : uncomment, need it bc I am working on a virtual environment and don't want do add it to git 
 
