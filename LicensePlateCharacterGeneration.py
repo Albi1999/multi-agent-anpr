@@ -320,7 +320,6 @@ def generate_dataset(output_dir, font_path):
         # Preprocess image
         clean_image_processed = preprocessing(clean_image)
         clean_image_processed.save(clean_dir + f'/{char}/' + f'{char}_original.png')
-        print(f'Saved {char}_original.png in {clean_dir}/{char}')
 
         for i in range(100):  # Generate 100 augmented versions of each character
             # Generate clean variations
@@ -350,7 +349,7 @@ def generate_dataset(output_dir, font_path):
 
                 if ratio < 0.8 or ratio > 1.1: # hardcoded for now, also still some problematic images can get through
                     noisy_image_processed = None 
-                    print('Image too noisy, retrying...')
+                    print(f'Image {char}_{i} too noisy, retrying...')
 
                 # TODO : create a classification NN that classifies whether an image is too mucb noise (so trained on clean images & noisy images binary classification (i.e. sigmoid threshold))
                 # such that NN is called here every time and helps us in not having too noisy training examples later 
@@ -359,7 +358,6 @@ def generate_dataset(output_dir, font_path):
 
             # Save images
             noisy_image_processed.save(noisy_dir + f'/{char}/' + f'{char}_{i}.png')
-            print(f'Saved {char}_{i}.png in {noisy_dir}/{char}')
 
 
 
