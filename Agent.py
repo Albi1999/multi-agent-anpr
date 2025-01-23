@@ -149,9 +149,7 @@ class LicensePlateAgent:
         bfilter = cv2.bilateralFilter(gray, 11, 17, 17)  # Noise reduction
         edges = cv2.Canny(bfilter, 100, 200)
         return edges
-
-
-
+    
     @staticmethod 
     def order_points(pts):
         """Order points in clockwise order starting from top-left"""
@@ -178,6 +176,8 @@ class LicensePlateAgent:
 
 
         return rect
+
+
     
     @staticmethod
     def scale_and_resize(img, target_height=110):
@@ -359,34 +359,22 @@ class LicensePlateAgent:
     def character_segmentation(self, image_path, deviation=10):
         image_path = image_path or self.IMAGE_PATH
         img_nmb = re.search(r'\d+', image_path).group()
-
-        img = None
-        img_copy = None
+        
+        # Process image once
+        img = self.scale_and_resize(cv2.imread(image_path))
+        _, img = self.perspective_correction(img=img, image_path=image_path)
+        img = self.adaptive_thresholding(img=img)
+        img = self.paint_image(img)
+        img = self.scale_and_resize(img)
+        img_copy = img.copy()
         points = []
         counter = 0
         
-        def process_and_display():
-            nonlocal img, img_copy
-            
-            img = self.scale_and_resize(cv2.imread(image_path))
-            _, img = self.perspective_correction(img=img, image_path=image_path)
-            img = self.adaptive_thresholding(img=img)
-            img = self.paint_image(img)
-            img = self.scale_and_resize(img)
-            img_copy = img.copy()
-            
-         #   img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
-          #  img = self.scale_and_resize(img)
-          #  img_copy = img.copy()
-            
-        process_and_display()
-        
         def mouse_callback(event, x, y, flags, param):
             nonlocal points, img_copy
-            
             if event == cv2.EVENT_LBUTTONDOWN and len(points) < 4:
                 points.append((x, y))
-                cv2.circle(img_copy, (x, y), 3, (255,0, 0), -1)
+                cv2.circle(img_copy, (x, y), 3, (255, 0, 0), -1)
                 
                 if len(points) == 4:
                     points_arr = np.array(points)
@@ -397,8 +385,8 @@ class LicensePlateAgent:
                     right = right[np.argsort(right[:, 1])]
                     
                     sorted_points = np.array([left[0], right[0], right[1], left[1]], dtype=np.int32)
-                    cv2.polylines(img_copy, [sorted_points], True, (255,0, 0), 2)
-                    
+                    cv2.polylines(img_copy, [sorted_points], True, (255, 0, 0), 2)
+        
         cv2.namedWindow('Select Characters')
         cv2.setMouseCallback('Select Characters', mouse_callback)
         
@@ -429,7 +417,7 @@ class LicensePlateAgent:
                 
                 counter += 1
                 points = []
-                process_and_display()
+                img_copy = img.copy()  # Reset image for next selection
                 
             elif key == 27:  # ESC
                 break
@@ -518,7 +506,7 @@ class LicensePlateAgent:
 if __name__ == "__main__":
     SAMPLE_ID = 1
     IMAGE_PATH = f'results/license_plates/license_plate.{SAMPLE_ID}.png'
-    IMAGE_PATH = f'VCS_Project/results/license_plates/license_plate.{SAMPLE_ID}_processed.png' # TODO : uncomment, need it bc I am working on a virtual environment and don't want do add it to git 
+    IMAGE_PATH = f'VCS_Project/results/license_plates/license_plate.{SAMPLE_ID}.png' # TODO : uncomment, need it bc I am working on a virtual environment and don't want do add it to git 
 
     agent = LicensePlateAgent()
    # agent.perspective_correction(IMAGE_PATH)
