@@ -16,7 +16,7 @@ import string
 # TODO : maybe do some changes here, img_size 90,140 is not always diretly the one to use but its around the right area (atleast from when I segmented the characters BEFORE
 # resizing them to 28x28, they had about this size 
 # TODO : I didn't manage for the letters/numbers to fill out the complete 90,140 , like it should be the case 
-def generate_single_character(char, font_path, image_size=(100,150)):
+def generate_single_character(char, font_path, image_size=(100, 150)):
     """
     Creates an image of a character following German license plate standards.
     Characters maintain exact width-to-height ratios:
@@ -36,8 +36,8 @@ def generate_single_character(char, font_path, image_size=(100,150)):
     draw = ImageDraw.Draw(image)
     
     # Define target ratios based on German standards
-    LETTER_RATIO = 47.5/75  # ≈ 0.6333
-    DIGIT_RATIO = 44.5/75   # ≈ 0.5933
+    LETTER_RATIO = 47.5 / 75  # ≈ 0.6333
+    DIGIT_RATIO = 44.5 / 75   # ≈ 0.5933
     
     # Determine if character is a letter or digit and set target ratio
     target_ratio = LETTER_RATIO if char in string.ascii_uppercase else DIGIT_RATIO
@@ -45,18 +45,17 @@ def generate_single_character(char, font_path, image_size=(100,150)):
     # Calculate target dimensions within the image
     image_ratio = image_size[0] / image_size[1]
     
-    # If image is wider than character should be, height determines size
-    if image_ratio > target_ratio:
-        target_height = int(image_size[1] * 0.9)  # 90% of image height
+    # CHANGED: Increased the scaling factor from 90% to 95% to utilize more of the canvas
+    if image_ratio > target_ratio:  # Height determines size
+        target_height = int(image_size[1] * 0.95)  # 95% of image height
         target_width = int(target_height * target_ratio)
-    # If image is narrower than character should be, width determines size
-    else:
-        target_width = int(image_size[0] * 0.9)  # 90% of image width
+    else:  # Width determines size
+        target_width = int(image_size[0] * 0.95)  # 95% of image width
         target_height = int(target_width / target_ratio)
     
-    # Binary search to find font size that gives correct dimensions
+    # Binary search to find font size
     min_size = 1
-    max_size = max(image_size) * 2  # Start with a large enough maximum
+    max_size = max(image_size) * 2
     optimal_size = None
     optimal_bbox = None
     
@@ -68,20 +67,17 @@ def generate_single_character(char, font_path, image_size=(100,150)):
         current_width = bbox[2] - bbox[0]
         current_height = bbox[3] - bbox[1]
         
-        # Check if dimensions are within 1 pixel of target
-        if (abs(current_width - target_width) <= 1 and 
+        # CHANGED: Adjusted to ensure the optimal size respects the new target dimensions
+        if (abs(current_width - target_width) <= 1 and
             abs(current_height - target_height) <= 1):
             optimal_size = current_size
             optimal_bbox = bbox
             break
-        # If too big, decrease size
         elif (current_width > target_width or 
               current_height > target_height):
             max_size = current_size - 1
-        # If too small, increase size
         else:
             min_size = current_size + 1
-            # Keep track of best size so far
             if optimal_size is None or current_width > target_width * 0.8:
                 optimal_size = current_size
                 optimal_bbox = bbox
@@ -94,11 +90,11 @@ def generate_single_character(char, font_path, image_size=(100,150)):
     x = (image_size[0] - (bbox[2] - bbox[0])) // 2 - bbox[0]
     y = (image_size[1] - (bbox[3] - bbox[1])) // 2 - bbox[1]
     
-    # Draw the character in black
+    # Draw the character
     draw.text((x, y), char, font=font, fill='black')
 
-
     return image
+
 
 
 
@@ -324,6 +320,7 @@ def generate_dataset(output_dir, font_path):
         # Preprocess image
         clean_image_processed = preprocessing(clean_image)
         clean_image_processed.save(clean_dir + f'/{char}/' + f'{char}_original.png')
+        print(f'Saved {char}_original.png in {clean_dir}/{char}')
 
         for i in range(100):  # Generate 100 augmented versions of each character
             # Generate clean variations
@@ -362,6 +359,7 @@ def generate_dataset(output_dir, font_path):
 
             # Save images
             noisy_image_processed.save(noisy_dir + f'/{char}/' + f'{char}_{i}.png')
+            print(f'Saved {char}_{i}.png in {noisy_dir}/{char}')
 
 
 
@@ -377,7 +375,10 @@ def generate_dataset(output_dir, font_path):
 #create_augmented_pair(img_A).show()
 #create_directories('/Users/marlon/Desktop/sem/vs/vs_proj/VCS_Project/data/synthetic/german_font')
 
-generate_dataset('/Users/marlon/Desktop/sem/vs/vs_proj/VCS_Project/data/synthetic/german_font','/Users/marlon/Desktop/sem/vs/vs_proj/VCS_Project/fonts/FE-FONT.TTF')
+# Marlon path
+#generate_dataset('/Users/marlon/Desktop/sem/vs/vs_proj/VCS_Project/data/synthetic/german_font','/Users/marlon/Desktop/sem/vs/vs_proj/VCS_Project/fonts/FE-FONT.TTF')
+
+generate_dataset('data/synthetic/german_font','fonts/FE-FONT.TTF')
 
 #adaptive_thresholding('/Users/marlon/Desktop/sem/vs/vs_proj/VCS_Project/data/synthetic/german_font/clean/0/', '0')
 #cv2.waitKey(0)
