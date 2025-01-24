@@ -12,6 +12,7 @@ import string
 import torch
 import torchvision.transforms as transforms
 from sklearn.cluster import KMeans
+from sklearn.mixture import GaussianMixture
 
 
 # image_size should be the same as the size of the characters we segment from the actual license plates BEFORE resizing them to 28x28 ! Such that
@@ -240,10 +241,43 @@ def preprocessing(image):
 
     return Image.fromarray(correct_img)
 
-# Function to compute edge density
-def compute_edge_density(image):
+# Function to compute recognizability metrics
+def compute_recognizability_metrics(image):
+    """Calculate recognizability metrics for the given image."""
     edges = cv2.Canny(image, 100, 200)
-    return np.sum(edges) / (image.shape[0] * image.shape[1])
+
+    # Edge density
+    edge_density = np.sum(edges) / (image.shape[0] * image.shape[1])
+
+    # Character stroke width consistency
+    contours, _ = cv2.findContours(edges, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+    stroke_widths = [cv2.boundingRect(contour)[2] for contour in contours if cv2.contourArea(contour) > 5]
+    if len(stroke_widths) > 1:
+        stroke_consistency = np.std(stroke_widths) / np.mean(stroke_widths)
+    else:
+        stroke_consistency = 1.0  # Default high inconsistency for edge cases
+
+    # Bounding box eccentricity
+    if contours:
+        x, y, w, h = cv2.boundingRect(np.vstack(contours))
+        eccentricity = w / h if h != 0 else 1.0
+    else:
+        eccentricity = 1.0  # Default for edge cases
+
+    # Pixel intensity histogram features
+    histogram = cv2.calcHist([image], [0], None, [256], [0, 256])
+    histogram_variance = np.var(histogram)
+
+    # Weighted sum of metrics
+    recognizability_score = (
+        0.5 * edge_density -
+        0.3 * stroke_consistency +
+        0.1 * eccentricity +
+        0.1 * histogram_variance
+    )
+
+    return recognizability_score
+
 
 
 # Define LeNet model for encoding
@@ -298,20 +332,31 @@ class Autoencoder(torch.nn.Module):
 
 
 
-def generate_dataset(output_dir, font_path, num_per_character=100):
-    """Generate dataset of clean and noisy character images, with filtering for recognizability"""
+def generate_dataset(output_dir, font_path):
+    """Generate dataset of clean and noisy character images with improvements"""
 
-    print("Initializing dataset generation...")
+    # Define character set (German license plates)
+    chars = list('ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789')
 
+    clean_dir = output_dir + '/clean'
+    noisy_dir = output_dir + '/noisy'
+
+    # Create main directories if they don't exist
+    os.makedirs(clean_dir, exist_ok=True)
+    os.makedirs(noisy_dir, exist_ok=True)
+
+    # Load the pretrained CNN (LeNet)
     pretrained_cnn = LeNet()
     pretrained_cnn.load_state_dict(torch.load("LeNet/lenet_mnist_weights.pth", map_location=torch.device('cpu')))
     pretrained_cnn.eval()
-    print("Pretrained CNN loaded.")
+    print("Pretrained CNN (LeNet) loaded.")
 
+    # Initialize Autoencoder
     autoencoder = Autoencoder(pretrained_cnn)
     autoencoder.eval()
     print("Autoencoder initialized.")
 
+    # Transformation pipeline
     transform = transforms.Compose([
         transforms.Grayscale(),
         transforms.Resize((32, 32)),
@@ -319,64 +364,87 @@ def generate_dataset(output_dir, font_path, num_per_character=100):
         transforms.Normalize((0.5,), (0.5,))
     ])
 
-    create_directories(output_dir)
-    print(f"Directories created under: {output_dir}")
-
-    chars = list('ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789')
-
+    # Generate multiple versions of each character
     for char in chars:
         print(f"Processing character: {char}")
-        clean_dir = os.path.join(output_dir, 'clean', char)
-        noisy_dir = os.path.join(output_dir, 'noisy', char)
 
+        # Ensure subdirectories for the character exist
+        char_clean_dir = os.path.join(clean_dir, char)
+        char_noisy_dir = os.path.join(noisy_dir, char)
+        os.makedirs(char_clean_dir, exist_ok=True)
+        os.makedirs(char_noisy_dir, exist_ok=True)
+
+        # Generate and save clean images
         clean_image = generate_single_character(char, font_path)
         clean_image_processed = preprocessing(clean_image)
-        clean_image_processed.save(os.path.join(clean_dir, f'{char}_original.png'))
-        print(f"Saved original clean image for {char}.")
+        clean_image_processed.save(os.path.join(char_clean_dir, f'{char}_original.png'))
+        
 
-        noisy_features = []
-        processed_noisy_images = []
+        generated_clean_count = 0
+        while generated_clean_count < 100:  # Generate 100 clean variations
+            clean_variation = create_clean_variations(clean_image)
+            clean_variation_processed = preprocessing(clean_variation)
 
-        # Generate noisy images and extract their features
-        while len(noisy_features) < num_per_character * 2:  # Generate extra images for clustering
-            noisy_image = create_augmented_pair(clean_image)
-            noisy_image_processed = preprocessing(noisy_image)
-
-            if noisy_image_processed is None:
-                print(f"Skipping unprocessable noisy image for {char}.")
+            if clean_variation_processed is None:
+                
                 continue
 
-            with torch.no_grad():
-                noisy_tensor = transform(noisy_image_processed).unsqueeze(0)
-                latent_features = autoencoder.encoder(noisy_tensor).view(-1).numpy()
-                noisy_features.append(latent_features)
+            clean_variation_processed.save(os.path.join(char_clean_dir, f'{char}_{generated_clean_count}.png'))
+            generated_clean_count += 1
+            
+
+        # Generate noisy images
+        generated_noisy_count = 0
+        while generated_noisy_count < 100:  # Ensure 100 recognizable noisy images
+            noisy_scores = []
+            processed_noisy_images = []
+
+            # Generate extra noisy images and calculate metrics
+            while len(noisy_scores) < 20:  # Generate a batch of 20 images
+                noisy_image = create_augmented_pair(clean_image)
+                noisy_image_processed = preprocessing(noisy_image)
+
+                if noisy_image_processed is None:
+                    print(f"Skipping unprocessable noisy image for {char}.")
+                    continue
+
+                noisy_image_np = np.array(noisy_image_processed)
+                recognizability_score = compute_recognizability_metrics(noisy_image_np)
+                noisy_scores.append(recognizability_score)
                 processed_noisy_images.append(noisy_image_processed)
 
-        # Cluster images into recognizable and unrecognizable
-        print(f"Clustering {len(noisy_features)} noisy images for {char}...")
-        kmeans = KMeans(n_clusters=2, random_state=42).fit(noisy_features)
-        cluster_labels = kmeans.labels_
+            # Determine the best GMM using BIC
+            best_gmm = None
+            lowest_bic = np.inf
+            for n in range(2, 5):  # Test 2 to 4 clusters
+                gmm = GaussianMixture(n_components=n, random_state=42)
+                gmm.fit(np.array(noisy_scores).reshape(-1, 1))
+                bic = gmm.bic(np.array(noisy_scores).reshape(-1, 1))
+                if bic < lowest_bic:
+                    lowest_bic = bic
+                    best_gmm = gmm
+            gmm = best_gmm  # Use the best GMM
 
-        # Select the cluster with higher edge density
-        edge_densities = [
-            compute_edge_density(np.array(img)) for img in processed_noisy_images
-        ]
-        cluster_1_density = np.mean([edge_densities[i] for i in range(len(edge_densities)) if cluster_labels[i] == 0])
-        cluster_2_density = np.mean([edge_densities[i] for i in range(len(edge_densities)) if cluster_labels[i] == 1])
-        recognizability_cluster = 0 if cluster_1_density > cluster_2_density else 1
+            # Get cluster probabilities and determine recognizability cluster
+            cluster_probs = gmm.predict_proba(np.array(noisy_scores).reshape(-1, 1))
+            cluster_means = gmm.means_.flatten()
+            recognizability_cluster = np.argmax(cluster_means)
 
-        selected_images = [
-            processed_noisy_images[i]
-            for i in range(len(processed_noisy_images))
-            if cluster_labels[i] == recognizability_cluster
-        ]
+            # Filter images based on GMM probabilities
+            for i, img in enumerate(processed_noisy_images):
+                if generated_noisy_count >= 100:
+                    break
+                if cluster_probs[i][recognizability_cluster] > 0.9:  # Probability threshold
+                    img.save(noisy_dir + f'/{char}/' + f'{char}_{generated_noisy_count}.png')
+                    generated_noisy_count += 1
+                    
 
-        # Save only the selected recognizable images
-        for idx, img in enumerate(selected_images[:num_per_character]):
-            img.save(os.path.join(noisy_dir, f'{char}_{idx}.png'))
-            print(f"Saved recognizable noisy image {idx + 1}/{num_per_character} for {char}.")
+
 
     print("Dataset generation complete!")
+
+
+
 
 
 generate_dataset('data/synthetic/german_font/LeNet', 'fonts/FE-FONT.TTF')
