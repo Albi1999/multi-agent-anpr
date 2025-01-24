@@ -11,8 +11,11 @@ import cv2
 import string
 import torch
 import torchvision.transforms as transforms
-from sklearn.cluster import KMeans
-
+import torch.nn as nn
+import torch.nn.functional as F
+import torchvision.models as models
+from sklearn.cluster import KMeans, DBSCAN
+from sklearn.preprocessing import StandardScaler
 
 # image_size should be the same as the size of the characters we segment from the actual license plates BEFORE resizing them to 28x28 ! Such that
 # we do the same transformations !!!
@@ -240,144 +243,119 @@ def preprocessing(image):
 
     return Image.fromarray(correct_img)
 
-# Function to compute edge density
-def compute_edge_density(image):
-    edges = cv2.Canny(image, 100, 200)
-    return np.sum(edges) / (image.shape[0] * image.shape[1])
-
-
-# Define LeNet model for encoding
-class LeNet(torch.nn.Module):
+# LeNet feature extraction for image filtering
+class LeNet(nn.Module):
     def __init__(self):
         super(LeNet, self).__init__()
-        # Feature extractor
-        self.features = torch.nn.Sequential(
-            torch.nn.Conv2d(1, 6, kernel_size=5),
-            torch.nn.ReLU(),
-            torch.nn.MaxPool2d(kernel_size=2),
-            torch.nn.Conv2d(6, 16, kernel_size=5),
-            torch.nn.ReLU(),
-            torch.nn.MaxPool2d(kernel_size=2)
+        self.features = nn.Sequential(
+            nn.Conv2d(1, 6, kernel_size=5),
+            nn.ReLU(),
+            nn.MaxPool2d(kernel_size=2),
+            nn.Conv2d(6, 16, kernel_size=5),
+            nn.ReLU(),
+            nn.MaxPool2d(kernel_size=2)
         )
-        # Classifier
-        self.classifier = torch.nn.Sequential(
-            torch.nn.Linear(16 * 4 * 4, 120),
-            torch.nn.ReLU(),
-            torch.nn.Linear(120, 84),
-            torch.nn.ReLU(),
-            torch.nn.Linear(84, 10)
+        self.classifier = nn.Sequential(
+            nn.Linear(16 * 4 * 4, 120),
+            nn.ReLU(),
+            nn.Linear(120, 84),
+            nn.ReLU(),
+            nn.Linear(84, 10)
         )
 
     def forward(self, x):
-        x = self.features(x)
-        x = x.view(-1, 16 * 4 * 4)
-        x = self.classifier(x)
-        return x
+        features = self.features(x)
+        features_flat = features.view(features.size(0), -1)
+        return features_flat
 
+class RecognizabilityFilter:
+    def __init__(self):
+        self.feature_extractor = LeNet()
+        state_dict = torch.load("LeNet/lenet_mnist_weights.pth", map_location=torch.device('cpu'))
+        self.feature_extractor.load_state_dict(state_dict)
+        self.feature_extractor.eval()
+        
+        self.transform = transforms.Compose([
+            transforms.Resize((28, 28)),
+            transforms.Grayscale(),
+            transforms.ToTensor(),
+            transforms.Normalize((0.5,), (0.5,))
+        ])
 
+    def extract_features(self, images):
+        features = []
+        with torch.no_grad():
+            for img in images:
+                img_tensor = self.transform(img).unsqueeze(0)
+                feature = self.feature_extractor(img_tensor)
+                features.append(feature.squeeze().numpy())
+        return np.array(features)
 
-# Define Autoencoder
-class Autoencoder(torch.nn.Module):
-    def __init__(self, pretrained_cnn):
-        super(Autoencoder, self).__init__()
-        # Use the encoder from the pretrained CNN (LeNet features)
-        self.encoder = pretrained_cnn.features
+    def cluster_and_filter(self, clean_images, noisy_images, n_clusters=5):
 
-        # Define a decoder that matches the encoder output
-        self.decoder = torch.nn.Sequential(
-            torch.nn.ConvTranspose2d(16, 6, kernel_size=5, stride=2),  # Match 16 channels
-            torch.nn.ReLU(),
-            torch.nn.ConvTranspose2d(6, 1, kernel_size=5, stride=2, output_padding=1),  # Back to 1 channel
-            torch.nn.Sigmoid()  # Output normalized to [0, 1]
-        )
+        threshold = 0.1
+        
+        clean_features = self.extract_features(clean_images)
+        noisy_features = self.extract_features(noisy_images)
+        
+        scaler = StandardScaler()
+        clean_features_scaled = scaler.fit_transform(clean_features)
+        noisy_features_scaled = scaler.transform(noisy_features)
+        
+        kmeans = KMeans(n_clusters=n_clusters, n_init=10)
+        cluster_labels = kmeans.fit_predict(noisy_features_scaled)
+        
+        filtered_clean = []
+        filtered_noisy = []
+        
+        for cluster in range(n_clusters):
+            cluster_indices = np.where(cluster_labels == cluster)[0]
+            cluster_center = kmeans.cluster_centers_[cluster]
+            distances = np.linalg.norm(noisy_features_scaled[cluster_indices] - cluster_center, axis=1)
+            best_indices = cluster_indices[np.argsort(distances)[:5]]  # Select top 5 most representative
+            
+            filtered_clean.extend([clean_images[i] for i in best_indices])
+            filtered_noisy.extend([noisy_images[i] for i in best_indices if self.compute_edge_quality([noisy_images[i]])[0] > threshold])
+        
+        return filtered_clean, filtered_noisy
 
-    def forward(self, x):
-        latent = self.encoder(x)
-        reconstruction = self.decoder(latent)
-        return reconstruction
-
-
+    def compute_edge_quality(self, images):
+        edge_qualities = []
+        for img in images:
+            img_array = np.array(img)
+            edges = cv2.Canny(img_array, 100, 200)
+            edge_density = np.sum(edges) / (img_array.shape[0] * img_array.shape[1])
+            edge_qualities.append(edge_density)
+        return edge_qualities
 
 def generate_dataset(output_dir, font_path, num_per_character=100):
-    """Generate dataset of clean and noisy character images, with filtering for recognizability"""
-
-    print("Initializing dataset generation...")
-
-    pretrained_cnn = LeNet()
-    pretrained_cnn.load_state_dict(torch.load("LeNet/lenet_mnist_weights.pth", map_location=torch.device('cpu')))
-    pretrained_cnn.eval()
-    print("Pretrained CNN loaded.")
-
-    autoencoder = Autoencoder(pretrained_cnn)
-    autoencoder.eval()
-    print("Autoencoder initialized.")
-
-    transform = transforms.Compose([
-        transforms.Grayscale(),
-        transforms.Resize((32, 32)),
-        transforms.ToTensor(),
-        transforms.Normalize((0.5,), (0.5,))
-    ])
-
     create_directories(output_dir)
-    print(f"Directories created under: {output_dir}")
-
     chars = list('ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789')
+    recognizability_filter = RecognizabilityFilter()
 
     for char in chars:
-        print(f"Processing character: {char}")
         clean_dir = os.path.join(output_dir, 'clean', char)
         noisy_dir = os.path.join(output_dir, 'noisy', char)
-
+        
         clean_image = generate_single_character(char, font_path)
-        clean_image_processed = preprocessing(clean_image)
-        clean_image_processed.save(os.path.join(clean_dir, f'{char}_original.png'))
-        print(f"Saved original clean image for {char}.")
-
-        noisy_features = []
-        processed_noisy_images = []
-
-        # Generate noisy images and extract their features
-        while len(noisy_features) < num_per_character * 2:  # Generate extra images for clustering
-            noisy_image = create_augmented_pair(clean_image)
-            noisy_image_processed = preprocessing(noisy_image)
-
-            if noisy_image_processed is None:
-                print(f"Skipping unprocessable noisy image for {char}.")
-                continue
-
-            with torch.no_grad():
-                noisy_tensor = transform(noisy_image_processed).unsqueeze(0)
-                latent_features = autoencoder.encoder(noisy_tensor).view(-1).numpy()
-                noisy_features.append(latent_features)
-                processed_noisy_images.append(noisy_image_processed)
-
-        # Cluster images into recognizable and unrecognizable
-        print(f"Clustering {len(noisy_features)} noisy images for {char}...")
-        kmeans = KMeans(n_clusters=2, random_state=42).fit(noisy_features)
-        cluster_labels = kmeans.labels_
-
-        # Select the cluster with higher edge density
-        edge_densities = [
-            compute_edge_density(np.array(img)) for img in processed_noisy_images
-        ]
-        cluster_1_density = np.mean([edge_densities[i] for i in range(len(edge_densities)) if cluster_labels[i] == 0])
-        cluster_2_density = np.mean([edge_densities[i] for i in range(len(edge_densities)) if cluster_labels[i] == 1])
-        recognizability_cluster = 0 if cluster_1_density > cluster_2_density else 1
-
-        selected_images = [
-            processed_noisy_images[i]
-            for i in range(len(processed_noisy_images))
-            if cluster_labels[i] == recognizability_cluster
-        ]
-
-        # Save only the selected recognizable images
-        for idx, img in enumerate(selected_images[:num_per_character]):
-            img.save(os.path.join(noisy_dir, f'{char}_{idx}.png'))
-            print(f"Saved recognizable noisy image {idx + 1}/{num_per_character} for {char}.")
-
-    print("Dataset generation complete!")
+        clean_variations = [create_clean_variations(clean_image) for _ in range(num_per_character)]
+        noisy_variations = [create_augmented_pair(clean_image) for _ in range(num_per_character)]
+        
+        clean_processed = [preprocessing(img) for img in clean_variations]
+        noisy_processed = [preprocessing(img) for img in noisy_variations]
+        
+        clean_processed = [img for img in clean_processed if img is not None]
+        noisy_processed = [img for img in noisy_processed if img is not None]
+        
+        filtered_clean, filtered_noisy = recognizability_filter.cluster_and_filter(clean_processed, noisy_processed)
+        
+        # Save the top 100 clean and noisy images for each character
+        for i, (clean_img, noisy_img) in enumerate(zip(filtered_clean[:100], filtered_noisy[:100])):
+            clean_img.save(os.path.join(clean_dir, f'{char}_{i}.png'))
+            noisy_img.save(os.path.join(noisy_dir, f'{char}_{i}.png'))
+    
+    print("Enhanced dataset generation complete!")
 
 
-generate_dataset('data/synthetic/german_font/LeNet', 'fonts/FE-FONT.TTF')
-
+# Use existing functions from the original script
+generate_dataset('data/synthetic/german_font/lenet_dataset', 'fonts/FE-FONT.TTF')
