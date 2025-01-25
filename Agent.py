@@ -10,6 +10,7 @@ import numpy as np
 import warnings
 import re 
 import os 
+from pathlib import Path 
 
 warnings.filterwarnings("ignore")
 
@@ -233,14 +234,9 @@ class LicensePlateAgent:
 
     def perspective_correction(self, img=None, image_path=None):
 
-        if image_path is not None:
-            image_path = image_path or self.IMAGE_PATH
-            og_img = cv2.imread(image_path)
-        else:
-            og_img = img.copy()
 
-        
-        
+        og_img = img.copy()
+
         src = self.select_corners(og_img)
 
 
@@ -263,27 +259,26 @@ class LicensePlateAgent:
         img_shape = (width, height)
         enhanced_img = cv2.warpPerspective(og_img, M, img_shape, flags=cv2.INTER_LINEAR)
 
-        if not self.IS_IMAGE_PROCESSED:
-            self.IMAGE_PATH = image_path.replace(".png", "_processed.png")
-        cv2.imwrite(self.IMAGE_PATH, enhanced_img)
-        self.IS_IMAGE_PROCESSED = True
-        return self.IMAGE_PATH, enhanced_img
+        return enhanced_img
     
 
-    # TODO : understand, completely generated for now 
-    def adaptive_thresholding(self, image_path=None, img=None, block_size=25, constant=1, mode='original'):
+
+    def adaptive_thresholding(self, image_path=None, img=None, block_size=25, constant=1, mode='processing'):
         current_thresh = None  # Store current threshold image
+
+        if mode == 'saving':
+            # Get the name of the image (for saving purposes)
+            image_path_splitted = image_path.split('/')
+            name = image_path_splitted[-1]
         
         def on_change(_):
             nonlocal current_thresh
             block = cv2.getTrackbarPos('Block Size', 'Adjust Parameters') 
             const = cv2.getTrackbarPos('Constant', 'Adjust Parameters')
-            block = block * 2 + 1
+            block = block * 2 + 1 # always keep block size an uneven number (else error)
             
-            if image_path is not None:
-                img_show = cv2.imread(image_path)
-            else:
-                img_show = img.copy()
+  
+            img_show = img.copy()
                 
             lab = cv2.cvtColor(img_show, cv2.COLOR_BGR2LAB)
             l_channel = lab[:,:,0]
@@ -307,7 +302,13 @@ class LicensePlateAgent:
             key = cv2.waitKey(1) & 0xFF
             if key == ord('f'):
                 cv2.destroyAllWindows()
-                return current_thresh
+                if mode == 'saving':
+                    cv2.imwrite('VCS_Project/data/actual_thresholded/' + name, current_thresh)
+                    return current_thresh
+                else:
+                    return current_thresh
+                # changed : normally just return current_thresh, but need to generate some of the images
+                # to check what we need for the synthetic dataset 
             elif key == 27:  # ESC
                 cv2.destroyAllWindows()
                 break
@@ -356,13 +357,41 @@ class LicensePlateAgent:
                 break
 
 
+    def adaptive_dataset_generation(self, folder_path):
+        # Used for generating the adaptive thresholded version of licenses plates of the actual dataset
+        # and used to understand what we have to pay attention to in generation of noisy versions 
+        # for the synthetic dataset
+        path_vers = Path(folder_path)
+        for path in path_vers.iterdir():
+            if path.is_file():
+                image_name = path.name.split('/')[-1]
+        
+            curr_path = folder_path + '/' + image_name
+       
+            # Get the image names that are currently in actual_thresholded
+            actual_thresholded = os.listdir('VCS_Project/data/actual_thresholded')
+            actual_thresholded = [img for img in actual_thresholded if img.endswith('.png')]
+            
+            
+
+            # Check if the image is already thresholded
+            if image_name in actual_thresholded:
+                continue 
+            
+           
+            else:
+                img = self.scale_and_resize(cv2.imread(curr_path))
+                img = self.perspective_correction(img=img)
+                img = self.adaptive_thresholding(img=img,image_path= curr_path, mode='saving')
+
+
     def character_segmentation(self, image_path, deviation=10):
         image_path = image_path or self.IMAGE_PATH
         img_nmb = re.search(r'\d+', image_path).group()
         
         # Process image once
         img = self.scale_and_resize(cv2.imread(image_path))
-        _, img = self.perspective_correction(img=img, image_path=image_path)
+        img = self.perspective_correction(img=img)
         img = self.adaptive_thresholding(img=img)
         img = self.paint_image(img)
         img = self.scale_and_resize(img)
@@ -424,6 +453,9 @@ class LicensePlateAgent:
                 
         cv2.destroyAllWindows()
         return None
+    
+
+    
         
     
         
@@ -504,13 +536,18 @@ class LicensePlateAgent:
 
 # Example usage
 if __name__ == "__main__":
-    SAMPLE_ID = 2
+    SAMPLE_ID = 285
     IMAGE_PATH = f'results/license_plates/license_plate.{SAMPLE_ID}.png'
     IMAGE_PATH = f'VCS_Project/results/license_plates/license_plate.{SAMPLE_ID}.png' # TODO : uncomment, need it bc I am working on a virtual environment and don't want do add it to git 
 
+    all_images = 'VCS_Project/results/license_plates'
     agent = LicensePlateAgent()
-   # agent.perspective_correction(IMAGE_PATH)
-    agent.character_segmentation(IMAGE_PATH)
+
+    agent.adaptive_dataset_generation(all_images)
+
+
+   # agent.character_segmentation(IMAGE_PATH)
+  #  agent.character_segmentation(IMAGE_PATH)
     #agent.adaptive_thresholding(IMAGE_PATH, block_size=111, constant=2, mode='processing')
     #agent.character_segmentation(f'VCS_Project/results/license_plates/license_plate.{SAMPLE_ID}_adaptive_thresholding.png')
   #  agent.perspective_correction('/Users/marlon/Desktop/sem/vs/vs_proj/VCS_Project/results/license_plates/license_plate.2.png')
