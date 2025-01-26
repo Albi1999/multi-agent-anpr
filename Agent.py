@@ -1,60 +1,73 @@
-from langchain.tools import Tool
-from langchain.chains import LLMChain
-from langchain.prompts import PromptTemplate
-from langchain_ollama import ChatOllama
+#from langchain_core.messages import HumanMessage
+#from langchain_ollama import ChatOllama
 from PIL import Image, ImageEnhance
+from pathlib import Path 
+from functools import wraps
 import ollama
 import base64
 import cv2
 import numpy as np
 import warnings
-import re 
-import os 
-from pathlib import Path 
+import os
 
 warnings.filterwarnings("ignore")
 
 
 class LicensePlateAgent:
-    def __init__(self, llm_name="llama3.2-vision", temperature=0):
-        self.IMAGE_PATH = ""
-        self.IS_IMAGE_PROCESSED = False
+    def __init__(self, image_path, llm_name="llama3.2-vision", verbose=True):
+        print("Hi, I'm Plately!\nHow can I help you?")
         self.VISION_MODEL = llm_name
-        self.CONTEXT_PROMPT = '''
-            The image is a car plate photo.
-            The output should be the car plate.
-            Output should be in this format - <Number of Car Plate> - Do not output anything else.
-            '''
-
-        # Initialize the LLM
-        self.llm = ChatOllama(model=llm_name, temperature=temperature)
-
-        # Define tool functions
-        self.tools = {
-            "grayscale": self.grayscale_tool,
-            "adjust_exposure": self.adjust_exposure_tool,
-            "adjust_brilliance": self.adjust_brilliance_tool,
-            "adjust_contrast": self.adjust_contrast_tool,
-            "adjust_sharpness": self.adjust_sharpness_tool,
-            "edge_detection": self.edge_detection_tool,
+        self.STARTING_IMAGE_PATH = image_path
+        self.TOOLS = {
+            "Grayscale": self.grayscale_tool,
+            "Adjust Exposure": self.adjust_exposure_tool,
+            "Adjust Brilliance": self.adjust_brilliance_tool,
+            "Adjust Contrast": self.adjust_contrast_tool,
+            "Adjust Sharpness": self.adjust_sharpness_tool,
+            "Edge Detection": self.edge_detection_tool,
+            "Adaptive Thresholding": self.adaptive_thresholding,
+            "Paint Image": self.paint_image
         }
+        
+        self.current_image_path = image_path
+        self.step = 0
+        self.max_steps = 0
+        self.verbose = verbose
 
-    @staticmethod
-    def encode_image(image_path):
-        with open(image_path, "rb") as image_file:
-            encoded_image = base64.b64encode(image_file.read()).decode('utf-8')
-        return encoded_image
+         # Initialize the LLM with the tools
+        #self.llm = ChatOllama(model=llm_name, temperature=temperature)
+        
+        
+    def process(func):
+        """Decorator to update the step counter after each image processing method."""
+        
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            # Call the function
+            result = func(*args, **kwargs)
+            # Update the step counter
+            args[0].update_step()
+            # If the function has a verbose argument, print the image path
+            if args[0].verbose:
+                print(f"Current Step: {args[0].step}\nCurrent image path: {args[0].current_image_path}")
 
-    def suggest_tool(self, image_path=None) -> str:
+            
+            return result
+        
+        return wrapper
+
+
+    def suggest_tool(self) -> str:
         """Suggests a tool based on the given image."""
-        image_path = image_path or self.IMAGE_PATH
-        encoded_image = self.encode_image(image_path)
-
+        encoded_image = self.encode_image(self.current_image_path)
+        context = "The image is a car plate photo."
         MESSAGES = [{
             "role": "system", 
             "content": 
                 '''
-                f' Tools: "grayscale", "adjust_exposure", "adjust_brilliance", "adjust_contrast", "adjust_sharpness", "edge_detection"
+                You are an expert in image processing and have been asked to suggest a tool to improve the image readability.
+                You have the following tools at your disposal:
+                Tools: {tools}
                 '''
         },
         {
@@ -64,7 +77,7 @@ class LicensePlateAgent:
             Context: {context}
 
             Respond in the format: ToolName(InputValue).
-            """.format(context=self.CONTEXT_PROMPT),
+            """.format(context=context, tools=", ".join(self.TOOLS.keys())),
             "images": [encoded_image]
         }]
 
@@ -76,7 +89,50 @@ class LicensePlateAgent:
         # Parse the response to extract tool name and input
         tool_name, tool_input = self.parse_tool_response(response['message']['content'])
         return print(f"Tool: {tool_name}, Input: {tool_input}")
+    
+    
+    ''' TODO : implement this method
+    def suggest_tool_llm(self, image_path=None) -> str:
+        """Suggests a tool based on the given image using the LLM."""
+        image_path = image_path or self.current_image_path
+        encoded_image = self.encode_image(image_path)
+        context = "The image is a car plate photo."
+        system_prompt = 
+                        You are an expert in image processing and have been asked to suggest a tool to improve the image readability.
+                        You have the following tools at your disposal:
+                        Tools: {tools}
+                        .format(tools=", ".join(self.tools.keys()))
+        user_prompt = """
+                    Based on the image data and the context below, suggest the best tool and its input to improve the image readability.
+                    Context: {context}
+                    """.format(context=context)
+                    
 
+        MESSAGES = [
+            HumanMessage(
+                role="system",
+                content=[
+                    {"type": "text", "text": system_prompt},
+                    
+                ]
+            ),
+            HumanMessage(
+                role="user",
+                content=[
+                    {"type": "text", "text": user_prompt},
+                    {"type": "image_url", "url": f'data:image/png;base64,{encoded_image}'}
+                ]
+            )
+        ]
+
+        response = self.llm.invoke(messages=MESSAGES)
+    '''
+    
+    
+    
+    
+    
+    ############ Tool response parsing ############
     @staticmethod
     def parse_tool_response(response: str) -> tuple:
         """Parses the tool response to extract tool name and input."""
@@ -86,31 +142,15 @@ class LicensePlateAgent:
             tool_input = response.split("(")[1].split(")")[0]
             return tool_name, tool_input
         return response, ""
+    
+    ############ Image encoding  ############
+    @staticmethod
+    def encode_image(image_path):
+        with open(image_path, "rb") as image_file:
+            encoded_image = base64.b64encode(image_file.read()).decode('utf-8')
+        return encoded_image
 
-    def vision_model_tool(self, image_path=None) -> str:
-        """Perform OCR on the given image using the Vision Model."""
-        image_path = image_path or self.IMAGE_PATH
-        encoded_image = self.encode_image(image_path)
-        MESSAGES = [{
-            "role": "user",
-            "content": self.CONTEXT_PROMPT,
-            "images": [encoded_image]
-        }]
-        response = ollama.chat(
-            model=self.VISION_MODEL,
-            messages=MESSAGES
-        )
-
-        self.IMAGE_PATH = image_path
-        return response['message']['content'].strip()
-
-    def show_image(self, image_path=None):
-        """Displays the image at the given path."""
-        image_path = image_path or self.IMAGE_PATH
-        img = Image.open(image_path)
-        img.show()
-
-    # Image enhancement methods
+    ############ Image processing tools ############
     @staticmethod
     def grayscale(image):
         """Convert an image to grayscale."""
@@ -141,7 +181,6 @@ class LicensePlateAgent:
         """Adjust the sharpness of an image."""
         enhancer = ImageEnhance.Sharpness(image)
         return enhancer.enhance(factor)
-    
 
     @staticmethod
     def edge_detection(image):
@@ -174,12 +213,8 @@ class LicensePlateAgent:
         rect[0] = pair_left_sorted_y[0] # bottom-left
         rect[2] = pair_right_sorted_y[0] # bottom-right
     
-
-
         return rect
 
-
-    
     @staticmethod
     def scale_and_resize(img, target_height=110):
         # GERMAN LICENSE PLATES : 520mmx110mm 
@@ -192,9 +227,13 @@ class LicensePlateAgent:
         # Resize while maintaining aspect ratio
         resized_plate = cv2.resize(img, (target_width, target_height))
         return resized_plate
+    
+    
+    
 
-
-
+    
+    ############ Adaptive Threshold  #############
+    
     def select_corners(self,image):
         
        # img = self.scale_and_resize(cv2.imread(image))
@@ -230,38 +269,6 @@ class LicensePlateAgent:
             elif key == 27:  # ESC to cancel
                 cv2.destroyAllWindows()
                 break
-
-
-    def perspective_correction(self, img=None, image_path=None):
-
-
-        og_img = img.copy()
-
-        src = self.select_corners(og_img)
-
-
-        # Get the source points (i.e. the 4 corner points)
-       # src = np.squeeze(license_cont).astype(np.float32)
-
-        height = og_img.shape[0] 
-        width = og_img.shape[1]
-        # Destination points (for flat parallel)
-        dst = np.float32([[0, 0], [0, height - 1], [width - 1, 0], [width - 1, height - 1]])
-
-        # Order the points correctly
-        license_cont = self.order_points(src)
-     #   dst = self.order_points(dst)
-
-        # Get the perspective transform
-        M = cv2.getPerspectiveTransform(license_cont, dst)
-
-        # Warp the image
-        img_shape = (width, height)
-        enhanced_img = cv2.warpPerspective(og_img, M, img_shape, flags=cv2.INTER_LINEAR)
-
-        return enhanced_img
-    
-
 
     def adaptive_thresholding(self, image_path=None, img=None, block_size=25, constant=1, mode='processing'):
         current_thresh = None  # Store current threshold image
@@ -312,7 +319,8 @@ class LicensePlateAgent:
             elif key == 27:  # ESC
                 cv2.destroyAllWindows()
                 break
-
+    
+    
     def paint_image(self, img):
         drawing = False
         last_point = None
@@ -355,8 +363,8 @@ class LicensePlateAgent:
             elif key == 27:
                 cv2.destroyAllWindows()
                 break
-
-
+    
+    
     def adaptive_dataset_generation(self, folder_path):
         # Used for generating the adaptive thresholded version of licenses plates of the actual dataset
         # and used to understand what we have to pay attention to in generation of noisy versions 
@@ -383,174 +391,130 @@ class LicensePlateAgent:
                 img = self.scale_and_resize(cv2.imread(curr_path))
                 img = self.perspective_correction(img=img)
                 img = self.adaptive_thresholding(img=img,image_path= curr_path, mode='saving')
-
-
-    def character_segmentation(self, image_path, deviation=10):
-        image_path = image_path or self.IMAGE_PATH
-        img_nmb = re.search(r'\d+', image_path).group()
-        
-        # Process image once
-        img = self.scale_and_resize(cv2.imread(image_path))
-        img = self.perspective_correction(img=img)
-        img = self.adaptive_thresholding(img=img)
-        img = self.paint_image(img)
-        img = self.scale_and_resize(img)
-        img_copy = img.copy()
-        points = []
-        counter = 0
-        
-        def mouse_callback(event, x, y, flags, param):
-            nonlocal points, img_copy
-            if event == cv2.EVENT_LBUTTONDOWN and len(points) < 4:
-                points.append((x, y))
-                cv2.circle(img_copy, (x, y), 3, (255, 0, 0), -1)
-                
-                if len(points) == 4:
-                    points_arr = np.array(points)
-                    x_sorted = points_arr[np.argsort(points_arr[:, 0])]
-                    left = x_sorted[:2]
-                    right = x_sorted[2:]
-                    left = left[np.argsort(left[:, 1])]
-                    right = right[np.argsort(right[:, 1])]
-                    
-                    sorted_points = np.array([left[0], right[0], right[1], left[1]], dtype=np.int32)
-                    cv2.polylines(img_copy, [sorted_points], True, (255, 0, 0), 2)
-        
-        cv2.namedWindow('Select Characters')
-        cv2.setMouseCallback('Select Characters', mouse_callback)
-        
-        while True:
-            cv2.imshow('Select Characters', img_copy)
-            key = cv2.waitKey(1) & 0xFF
-            
-            if len(points) == 4 and key == ord('f'):
-                points_arr = np.array(points)
-                x = min(points_arr[:, 0])
-                y = min(points_arr[:, 1])
-                w = max(points_arr[:, 0]) - x
-                h = max(points_arr[:, 1]) - y
-                
-                roi = img[y:y+h, x:x+w]
-                scale = min(20.0/w, 20.0/h)
-                new_w = int(w * scale)
-                new_h = int(h * scale)
-                char_resized = cv2.resize(roi, (new_w, new_h))
-                
-                mnist_size = np.zeros((28, 28), dtype=np.uint8)
-                x_offset = (28 - new_w) // 2
-                y_offset = (28 - new_h) // 2
-                mnist_size[y_offset:y_offset+new_h, x_offset:x_offset+new_w] = char_resized
-                
-                os.makedirs(f"VCS_Project/results/license_plates/segmented_plate.{img_nmb}", exist_ok=True)
-                cv2.imwrite(f"VCS_Project/results/license_plates/segmented_plate.{img_nmb}/character_{counter}.png", mnist_size)
-                
-                counter += 1
-                points = []
-                img_copy = img.copy()  # Reset image for next selection
-                
-            elif key == 27:  # ESC
-                break
-                
-        cv2.destroyAllWindows()
-        return None
     
-
     
-        
     
-        
-
-         
- 
-    def adjust_exposure_tool(self, factor: float = 1.0, image_path=None) -> str:
+    ############ Image processing methods ############
+    
+    @process
+    def adjust_exposure_tool(self, factor: float = 1.0) -> str:
         """Adjusts the exposure of an image and saves it."""
-        image_path = image_path or self.IMAGE_PATH
-        img = Image.open(image_path)
+        img = Image.open(self.current_image_path)
         enhanced_img = self.adjust_exposure(img, factor)
-        if not self.IS_IMAGE_PROCESSED:
-            self.IMAGE_PATH = image_path.replace(".png", "_processed.png")
-        enhanced_img.save(self.IMAGE_PATH)
-        self.IS_IMAGE_PROCESSED = True
-        return self.IMAGE_PATH
-
-    def adjust_brilliance_tool(self, factor: float = 1.0, image_path=None) -> str:
+        enhanced_img.save(self.current_image_path)
+    
+    @process
+    def adjust_brilliance_tool(self, factor: float = 1.0) -> str:
         """Adjusts the brilliance of an image and saves it."""
-        image_path = image_path or self.IMAGE_PATH
-        img = Image.open(image_path)
+        img = Image.open(self.current_image_path)
         enhanced_img = self.adjust_brilliance(img, factor)
-        if not self.IS_IMAGE_PROCESSED:
-            self.IMAGE_PATH = image_path.replace(".png", "_processed.png")
-        enhanced_img.save(self.IMAGE_PATH)
-        self.IS_IMAGE_PROCESSED = True
-        return self.IMAGE_PATH
+        enhanced_img.save(self.current_image_path)
 
-    def adjust_contrast_tool(self, factor: float = 1.0, image_path=None) -> str:
+    @process
+    def adjust_contrast_tool(self, factor: float = 1.0) -> str:
         """Adjusts the contrast of an image and saves it."""
-        image_path = image_path or self.IMAGE_PATH
-        img = Image.open(image_path)
+        img = Image.open(self.current_image_path)
         enhanced_img = self.adjust_contrast(img, factor)
-        if not self.IS_IMAGE_PROCESSED:
-            self.IMAGE_PATH = image_path.replace(".png", "_processed.png")
-        enhanced_img.save(self.IMAGE_PATH)
-        self.IS_IMAGE_PROCESSED = True
-        return self.IMAGE_PATH
+        enhanced_img.save(self.current_image_path)
 
-    def adjust_sharpness_tool(self, factor: float = 1.0, image_path=None) -> str:
+    @process
+    def adjust_sharpness_tool(self, factor: float = 1.0) -> str:
         """Adjusts the sharpness of an image and saves it."""
-        image_path = image_path or self.IMAGE_PATH
-        img = Image.open(image_path)
+        img = Image.open(self.current_image_path)
         enhanced_img = self.adjust_sharpness(img, factor)
-        if not self.IS_IMAGE_PROCESSED:
-            self.IMAGE_PATH = image_path.replace(".png", "_processed.png")
-        enhanced_img.save(self.IMAGE_PATH)
-        self.IS_IMAGE_PROCESSED = True
-        return self.IMAGE_PATH
+        enhanced_img.save(self.current_image_path)
 
-    def edge_detection_tool(self, image_path=None) -> str:
+    @process
+    def edge_detection_tool(self,) -> str:
         """Detects edges in an image and saves the result."""
-        image_path = image_path or self.IMAGE_PATH
-        img = Image.open(image_path)
+        img = Image.open(self.current_image_path)
         edges = self.edge_detection(img)
-        if not self.IS_IMAGE_PROCESSED:
-            self.IMAGE_PATH = image_path.replace(".png", "_processed.png")
-        cv2.imwrite(self.IMAGE_PATH, edges)
-        self.IS_IMAGE_PROCESSED = True
-        return self.IMAGE_PATH
+        cv2.imwrite(self.current_image_path, edges)
 
-    def grayscale_tool(self, image_path=None) -> str:
+    @process
+    def grayscale_tool(self) -> str:
         """Converts an image to grayscale and saves it."""
-        image_path = image_path or self.IMAGE_PATH
-        img = cv2.imread(image_path)
+        img = cv2.imread(self.current_image_path)
         processed_image = self.grayscale(img)
-        if not self.IS_IMAGE_PROCESSED:
-            self.IMAGE_PATH = image_path.replace(".png", "_processed.png")
-        cv2.imwrite(self.IMAGE_PATH, processed_image)
-        self.IS_IMAGE_PROCESSED = True
-        return self.IMAGE_PATH
+        cv2.imwrite(self.current_image_path, processed_image)    
+        
+        
+    
+    
+
+    ############ Image workflow methods ############
+    
+    def update_step(self) -> str:
+        """Update the step counter and save the image to a new path."""
+        if self.step == 0:
+            os.makedirs('process', exist_ok=True)
+        self.step += 1
+        self.max_steps = self.step
+        
+        # Save the image to the process folder
+        img = Image.open(self.current_image_path)
+        new_path = f'process/step_{self.step}.png'
+        self.current_image_path = new_path
+        img.save(new_path)
+        return new_path
+    
+    def go_back(self, step = 1):
+        """Go back to the previous step by loading the previous image."""
+        if self.step - step > 1:
+            self.step -= 1
+            self.current_image_path = f'process/step_{self.step}.png'
+        else:
+            self.current_image_path = f'process/step_{self.step}.png'
+            print("You have reached the first step.")
+        return self.current_image_path
+
+    def go_forward(self, step = 1):
+        """Go forward to the next step by loading the next image."""
+        if self.step + step < self.max_steps:
+            self.step += 1
+            self.current_image_path = f'process/step_{self.step}.png'
+        else:
+            self.current_image_path = f'process/step_{self.step}.png'
+            print("You have reached the last step.")
+        return self.current_image_path
 
     def restart(self):
         """Restart the agent by clearing the image path."""
-        self.IMAGE_PATH = self.IMAGE_PATH.replace("_processed", "")
-        self.IS_IMAGE_PROCESSED = False
+        self.current_image_path = self.STARTING_IMAGE_PATH
+        self.step = 0
+        os.system("rm -rf process")
+    
+    
+    
+    
+    
+    ############ Image display methods ############
+    
+    def show_image(self):
+        """Displays the image at the given path."""
+        img = Image.open(self.current_image_path)
+        img.show()
+        
+        
+
+
 
 
 # Example usage
 if __name__ == "__main__":
     SAMPLE_ID = 285
     IMAGE_PATH = f'results/license_plates/license_plate.{SAMPLE_ID}.png'
-    IMAGE_PATH = f'VCS_Project/results/license_plates/license_plate.{SAMPLE_ID}.png' # TODO : uncomment, need it bc I am working on a virtual environment and don't want do add it to git 
+    #IMAGE_PATH = f'VCS_Project/results/license_plates/license_plate.{SAMPLE_ID}.png' # TODO : uncomment, need it bc I am working on a virtual environment and don't want do add it to git 
 
-    all_images = 'VCS_Project/results/license_plates'
-    agent = LicensePlateAgent()
+    #all_images = 'VCS_Project/results/license_plates'
+    agent = LicensePlateAgent(image_path=IMAGE_PATH)
 
-    agent.adaptive_dataset_generation(all_images)
-
-
-   # agent.character_segmentation(IMAGE_PATH)
-  #  agent.character_segmentation(IMAGE_PATH)
+    #agent.adaptive_dataset_generation(all_images)
+    #agent.character_segmentation(IMAGE_PATH)
+    #agent.character_segmentation(IMAGE_PATH)
     #agent.adaptive_thresholding(IMAGE_PATH, block_size=111, constant=2, mode='processing')
     #agent.character_segmentation(f'VCS_Project/results/license_plates/license_plate.{SAMPLE_ID}_adaptive_thresholding.png')
-  #  agent.perspective_correction('/Users/marlon/Desktop/sem/vs/vs_proj/VCS_Project/results/license_plates/license_plate.2.png')
+    #agent.perspective_correction('/Users/marlon/Desktop/sem/vs/vs_proj/VCS_Project/results/license_plates/license_plate.2.png')
     
 
 
