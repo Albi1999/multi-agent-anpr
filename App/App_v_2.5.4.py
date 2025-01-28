@@ -251,46 +251,113 @@ app.layout = html.Div(
     [
         Input('upload-image', 'contents'),
         Input('auto-crop-btn', 'n_clicks'),
-        Input('toggle-sliders', 'n_clicks'),
+        Input('toggle-blur-options', 'n_clicks'),
+        Input('blur-btn', 'n_clicks'),
+        Input('edge-btn', 'n_clicks'),
+        Input('grayscale-btn', 'n_clicks'),
+        Input('sharpen-btn', 'n_clicks'),
+        Input('invert-btn', 'n_clicks'),
         Input('brightness-slider', 'value'),
         Input('contrast-slider', 'value'),
         Input('exposure-slider', 'value'),
-        Input('brilliance-slider', 'value')
+        Input('brilliance-slider', 'value'),
+        Input('threshold1-slider', 'value'),
+        Input('threshold2-slider', 'value'),
+        Input('undo-btn', 'n_clicks'),
+        Input('redo-btn', 'n_clicks'),
+        Input('toggle-sliders', 'n_clicks')
     ],
     [State('sliders-container', 'style')]
 )
 
-def process_image(contents, auto_crop_clicks, toggle_clicks, brightness, contrast, exposure, brilliance, slider_style):
+def process_image(contents, auto_crop_clicks, blur_clicks, edge_clicks, grayscale_clicks, 
+                  sharpen_clicks, invert_clicks, brightness, contrast, exposure, brilliance, 
+                  undo_clicks, redo_clicks, toggle_sliders_clicks, blur_style, slider_style, threshold1, threshold2,):
     global uploaded_image, processed_image, history, redo_stack
 
     ctx = dash.callback_context
     if not ctx.triggered:
         return None, slider_style
 
-    # Determine which input triggered the callback
     trigger_id = ctx.triggered[0]['prop_id'].split('.')[0]
 
-    if trigger_id == 'upload-image' and contents:
-        # Handle image upload
-        _, content_string = contents.split(',')
-        decoded = base64.b64decode(content_string)
-        np_image = np.frombuffer(decoded, np.uint8)
-        uploaded_image = cv2.imdecode(np_image, cv2.IMREAD_COLOR)
-        processed_image = uploaded_image.copy()
-        history = [processed_image.copy()]
-        redo_stack = []
-        return html.Img(src=image_to_base64(uploaded_image), style={"width": "90%", "borderRadius": "10px"}), slider_style
-
-    if trigger_id == 'auto-crop-btn' and processed_image is not None:
-        # Handle auto-cropping
-        processed_image = auto_crop_license_plate(processed_image)
-        history.append(processed_image.copy())
-        redo_stack.clear()
-        return html.Img(src=image_to_base64(processed_image), style={"width": "90%", "borderRadius": "10px"}), slider_style
-
+    # Ensure slider_style is always a dictionary
     if trigger_id == 'toggle-sliders':
-        # Toggle the visibility of the sliders
-        return dash.no_update, {"display": "block"} if slider_style == {"display": "none"} else {"display": "none"}
+        if slider_style == {"display": "none"}:
+            slider_style = {"display": "block"}
+        else:
+            slider_style = {"display": "none"}
+
+    if trigger_id == 'upload-image':
+        if contents:
+            _, content_string = contents.split(',')
+            decoded = base64.b64decode(content_string)
+            np_image = np.frombuffer(decoded, np.uint8)
+            uploaded_image = cv2.imdecode(np_image, cv2.IMREAD_COLOR)
+            processed_image = uploaded_image.copy()
+            history = [processed_image.copy()]
+            redo_stack = []
+            return html.Img(src=image_to_base64(uploaded_image), style={"width": "90%", "borderRadius": "10px"}), slider_style
+
+    if trigger_id == 'toggle-blur-options':
+        # Toggle the visibility of the blur options
+        if blur_style == {"display": "none"}:
+            return dash.no_update, {"display": "block"}
+        else:
+            return dash.no_update, {"display": "none"}
+
+    if trigger_id == 'undo-btn':
+        if len(history) > 1:
+            redo_stack.append(history.pop())
+            processed_image = history[-1].copy()
+            return html.Img(src=image_to_base64(processed_image), style={"width": "90%", "borderRadius": "10px"}), blur_style
+
+    if trigger_id == 'redo-btn':
+        if redo_stack:
+            processed_image = redo_stack.pop()
+            history.append(processed_image.copy())
+            return html.Img(src=image_to_base64(processed_image), style={"width": "90%", "borderRadius": "10px"}), blur_style
+
+    if trigger_id == 'auto-crop-btn':
+        if processed_image is not None:
+            processed_image = auto_crop_license_plate(processed_image)
+            history.append(processed_image.copy())
+            redo_stack.clear()
+
+    if trigger_id == 'blur-btn':
+        if processed_image is not None:
+            blur_kernel = max(1, blur_kernel // 2 * 2 + 1)
+            processed_image = cv2.GaussianBlur(processed_image, (blur_kernel, blur_kernel), 0)
+            history.append(processed_image.copy())
+            redo_stack.clear()
+
+    if trigger_id == 'edge-btn':
+        if processed_image is not None:
+            edges = cv2.Canny(processed_image, threshold1, threshold2)
+            processed_image = cv2.cvtColor(edges, cv2.COLOR_GRAY2BGR)
+            history.append(processed_image.copy())
+            redo_stack.clear()
+
+    if trigger_id == 'grayscale-btn':
+        if processed_image is not None:
+            processed_image = cv2.cvtColor(processed_image, cv2.COLOR_BGR2GRAY)
+            processed_image = cv2.cvtColor(processed_image, cv2.COLOR_GRAY2BGR)
+            history.append(processed_image.copy())
+            redo_stack.clear()
+
+    if trigger_id == 'sharpen-btn':
+        if processed_image is not None:
+            kernel = np.array([[0, -1, 0], [-1, 5, -1], [0, -1, 0]])
+            processed_image = cv2.filter2D(processed_image, -1, kernel)
+            history.append(processed_image.copy())
+            redo_stack.clear()
+
+    if trigger_id == 'invert-btn':
+        if processed_image is not None:
+            processed_image = cv2.bitwise_not(processed_image)
+            history.append(processed_image.copy())
+            redo_stack.clear()
+    
 
     if trigger_id in ['brightness-slider', 'contrast-slider', 'exposure-slider', 'brilliance-slider'] and processed_image is not None:
         # Apply transformations when sliders are moved
@@ -299,7 +366,8 @@ def process_image(contents, auto_crop_clicks, toggle_clicks, brightness, contras
         redo_stack.clear()
         return html.Img(src=image_to_base64(processed_image), style={"width": "90%", "borderRadius": "10px"}), slider_style
 
-    return html.Img(src=image_to_base64(processed_image), style={"width": "90%", "borderRadius": "10px"}), slider_style
+    return html.Img(src=image_to_base64(processed_image), style={"width": "90%", "borderRadius": "10px"}), blur_style
+
 
 
 # Callback to download the processed image
