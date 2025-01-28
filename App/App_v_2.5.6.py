@@ -120,10 +120,10 @@ app.layout = html.Div(
                             dcc.Slider(
                                 id='blur-slider',
                                 min=1,
-                                max=21,
+                                max=11,
                                 step=2,
-                                value=5,
-                                marks={i: f'{i}px' for i in range(1, 22, 2)},
+                                value=3,
+                                marks={i: f'{i}px' for i in range(1, 12, 2)},
                                 tooltip={"placement": "bottom", "always_visible": True},
                             ),
                             html.Button('Apply Blur', id='blur-btn', n_clicks=0, 
@@ -177,10 +177,59 @@ app.layout = html.Div(
     ]
 )
 
-# Consolidated callback for processing
+def improved_edge_detection(image, min_threshold, max_threshold):
+    """
+    Enhanced edge detection using adaptive thresholding and gradients
+    """
+    # Convert to grayscale if not already
+    if len(image.shape) == 3:
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    else:
+        gray = image.copy()
+    
+    # Normalize the image
+    normalized = cv2.normalize(gray, None, 0, 255, cv2.NORM_MINMAX)
+    
+    # Apply bilateral filter to reduce noise while preserving edges
+    bilateral = cv2.bilateralFilter(normalized, 11, 75, 75)
+    
+    # Calculate gradients using Sobel
+    gradient_x = cv2.Sobel(bilateral, cv2.CV_64F, 1, 0, ksize=3)
+    gradient_y = cv2.Sobel(bilateral, cv2.CV_64F, 0, 1, ksize=3)
+    
+    # Calculate gradient magnitude
+    gradient_magnitude = np.sqrt(gradient_x**2 + gradient_y**2)
+    gradient_magnitude = np.uint8(gradient_magnitude * 255 / gradient_magnitude.max())
+    
+    # Apply adaptive thresholding
+    adaptive_thresh = cv2.adaptiveThreshold(
+        bilateral,
+        255,
+        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+        cv2.THRESH_BINARY,
+        11,  # Block size
+        2    # C constant
+    )
+    
+    # Combine gradient information with adaptive threshold
+    combined = cv2.bitwise_and(gradient_magnitude, adaptive_thresh)
+    
+    # Apply threshold based on slider values
+    _, final = cv2.threshold(combined, min_threshold, max_threshold, cv2.THRESH_BINARY)
+    
+    # Clean up noise
+    kernel = np.ones((2,2),np.uint8)
+    final = cv2.morphologyEx(final, cv2.MORPH_CLOSE, kernel)
+    
+    return final
+
+# Modify the process_image callback to use the new function
 @app.callback(
-    [Output('image-display', 'children'),
-     Output('blur-options', 'style')],
+    [
+        Output('image-display', 'children'),
+        Output('blur-options', 'style'),
+        Output('download-link', 'href')
+    ],
     [
         Input('upload-image', 'contents'),
         Input('auto-crop-btn', 'n_clicks'),
@@ -200,14 +249,15 @@ app.layout = html.Div(
         State('blur-options', 'style')
     ]
 )
-def process_image(contents, auto_crop_clicks, blur_clicks, edge_clicks, grayscale_clicks, sharpen_clicks, invert_clicks, undo_clicks, redo_clicks, toggle_blur_clicks, blur_kernel, threshold1, threshold2, blur_style):
+def process_image(contents, auto_crop_clicks, blur_clicks, edge_clicks, grayscale_clicks, 
+                 sharpen_clicks, invert_clicks, undo_clicks, redo_clicks, toggle_blur_clicks, 
+                 blur_kernel, threshold1, threshold2, blur_style):
     global uploaded_image, processed_image, history, redo_stack
 
     ctx = dash.callback_context
     if not ctx.triggered:
-        return None, blur_style
+        return None, blur_style, ""
 
-    # Determine which input triggered the callback
     trigger_id = ctx.triggered[0]['prop_id'].split('.')[0]
 
     if trigger_id == 'upload-image':
@@ -219,26 +269,40 @@ def process_image(contents, auto_crop_clicks, blur_clicks, edge_clicks, grayscal
             processed_image = uploaded_image.copy()
             history = [processed_image.copy()]
             redo_stack = []
-            return html.Img(src=image_to_base64(uploaded_image), style={"width": "90%", "borderRadius": "10px"}), blur_style
+            encoded_image = image_to_base64(uploaded_image, format="png")
+            return (
+                html.Img(src=encoded_image, style={"width": "90%", "borderRadius": "10px"}), 
+                blur_style, 
+                f"data:image/png;base64,{encoded_image.split(',')[1]}"
+            )
 
     if trigger_id == 'toggle-blur-options':
-        # Toggle the visibility of the blur options
         if blur_style == {"display": "none"}:
-            return dash.no_update, {"display": "block"}
+            return dash.no_update, {"display": "block"}, ""
         else:
-            return dash.no_update, {"display": "none"}
+            return dash.no_update, {"display": "none"}, ""
 
     if trigger_id == 'undo-btn':
         if len(history) > 1:
             redo_stack.append(history.pop())
             processed_image = history[-1].copy()
-            return html.Img(src=image_to_base64(processed_image), style={"width": "90%", "borderRadius": "10px"}), blur_style
+            encoded_image = image_to_base64(processed_image, format="png")
+            return (
+                html.Img(src=encoded_image, style={"width": "90%", "borderRadius": "10px"}), 
+                blur_style, 
+                f"data:image/png;base64,{encoded_image.split(',')[1]}"
+            )
 
     if trigger_id == 'redo-btn':
         if redo_stack:
             processed_image = redo_stack.pop()
             history.append(processed_image.copy())
-            return html.Img(src=image_to_base64(processed_image), style={"width": "90%", "borderRadius": "10px"}), blur_style
+            encoded_image = image_to_base64(processed_image, format="png")
+            return (
+                html.Img(src=encoded_image, style={"width": "90%", "borderRadius": "10px"}), 
+                blur_style, 
+                f"data:image/png;base64,{encoded_image.split(',')[1]}"
+            )
 
     if trigger_id == 'auto-crop-btn':
         if processed_image is not None:
@@ -255,7 +319,9 @@ def process_image(contents, auto_crop_clicks, blur_clicks, edge_clicks, grayscal
 
     if trigger_id == 'edge-btn':
         if processed_image is not None:
-            edges = cv2.Canny(processed_image, threshold1, threshold2)
+            min_thresh = int((threshold1 / 255.0) * 100)  # Scale to 0-100 range
+            max_thresh = 255  # Keep maximum brightness
+            edges = improved_edge_detection(processed_image, min_thresh, max_thresh)
             processed_image = cv2.cvtColor(edges, cv2.COLOR_GRAY2BGR)
             history.append(processed_image.copy())
             redo_stack.clear()
@@ -280,14 +346,17 @@ def process_image(contents, auto_crop_clicks, blur_clicks, edge_clicks, grayscal
             history.append(processed_image.copy())
             redo_stack.clear()
 
-    return html.Img(src=image_to_base64(processed_image), style={"width": "90%", "borderRadius": "10px"}), blur_style
+    # Convert the processed image to base64 for download
+    encoded_image = image_to_base64(processed_image, format="png")
+    download_href = f"data:image/png;base64,{encoded_image.split(',')[1]}"
+    
+    return (
+        html.Img(src=image_to_base64(processed_image), style={"width": "90%", "borderRadius": "10px"}), 
+        blur_style, 
+        download_href
+    )
 
-# Callback to download the processed image
-@app.callback(
-    Output('download-link', 'href'),
-    Input('download-link', 'n_clicks'),
-    prevent_initial_call=True
-)
+'''
 def download_image(n_clicks):
     global processed_image
     if processed_image is not None:
@@ -299,6 +368,7 @@ def download_image(n_clicks):
         encoded_image = base64.b64encode(buffer.getvalue()).decode()
         return f'data:image/png;base64,{encoded_image}'
     return ""
+'''
 
 # Run the app
 if __name__ == '__main__':
