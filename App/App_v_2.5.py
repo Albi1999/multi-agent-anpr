@@ -21,6 +21,64 @@ def image_to_base64(image, format="jpg"):
     encoded_image = base64.b64encode(buffer).decode()
     return f'data:image/{format};base64,{encoded_image}'
 
+# Automatic license plate detection and cropping
+def auto_crop_license_plate(image):
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+    edged = cv2.Canny(blurred, 50, 200)
+
+    # Find contours
+    contours, _ = cv2.findContours(edged, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+    contours = sorted(contours, key=cv2.contourArea, reverse=True)[:10]
+
+    license_plate = None
+    for contour in contours:
+        approx = cv2.approxPolyDP(contour, 0.02 * cv2.arcLength(contour, True), True)
+        if len(approx) == 4:  # Look for a rectangle
+            license_plate = approx
+            break
+
+    if license_plate is not None:
+        # Create a mask for the plate and crop it
+        mask = np.zeros_like(gray)
+        cv2.drawContours(mask, [license_plate], -1, 255, -1)
+        x, y, w, h = cv2.boundingRect(license_plate)
+        cropped = image[y:y + h, x:x + w]
+
+        # Perspective transform to correct tilt
+        pts = license_plate.reshape(4, 2)
+        rect = np.zeros((4, 2), dtype="float32")
+
+        s = pts.sum(axis=1)
+        rect[0] = pts[np.argmin(s)]
+        rect[2] = pts[np.argmax(s)]
+
+        diff = np.diff(pts, axis=1)
+        rect[1] = pts[np.argmin(diff)]
+        rect[3] = pts[np.argmax(diff)]
+
+        (tl, tr, br, bl) = rect
+        widthA = np.sqrt(((br[0] - bl[0]) ** 2) + ((br[1] - bl[1]) ** 2))
+        widthB = np.sqrt(((tr[0] - tl[0]) ** 2) + ((tr[1] - tl[1]) ** 2))
+        maxWidth = max(int(widthA), int(widthB))
+
+        heightA = np.sqrt(((tr[0] - br[0]) ** 2) + ((tr[1] - br[1]) ** 2))
+        heightB = np.sqrt(((tl[0] - bl[0]) ** 2) + ((tl[1] - bl[1]) ** 2))
+        maxHeight = max(int(heightA), int(heightB))
+
+        dst = np.array([
+            [0, 0],
+            [maxWidth - 1, 0],
+            [maxWidth - 1, maxHeight - 1],
+            [0, maxHeight - 1]
+        ], dtype="float32")
+
+        M = cv2.getPerspectiveTransform(rect, dst)
+        warped = cv2.warpPerspective(image, M, (maxWidth, maxHeight))
+        return warped
+
+    return image  # Return the original image if no license plate is detected
+
 # Layout of the app
 app.layout = html.Div(
     style={"backgroundColor": "#1f1f1f", "color": "#f0f0f0", "fontFamily": "Arial"},
@@ -51,10 +109,7 @@ app.layout = html.Div(
                             multiple=False
                         ),
 
-                        html.Div("Crop Ratio", style={"marginTop": "20px"}),
-                        dcc.Slider(id='crop-slider', min=0, max=50, step=1, value=10, 
-                                   marks={i: f'{i}%' for i in range(0, 51, 10)}, tooltip={"placement": "bottom"}),
-                        html.Button('Crop & Resize', id='crop-btn', n_clicks=0, 
+                        html.Button('Auto Crop License Plate', id='auto-crop-btn', n_clicks=0, 
                                     style={"width": "100%", "padding": "10px", "backgroundColor": "#28a745", "color": "#fff", "border": "none", "borderRadius": "5px", "marginTop": "10px"}),
 
                         html.Div("Blur Kernel Size", style={"marginTop": "20px"}),
@@ -115,7 +170,7 @@ app.layout = html.Div(
     Output('image-display', 'children'),
     [
         Input('upload-image', 'contents'),
-        Input('crop-btn', 'n_clicks'),
+        Input('auto-crop-btn', 'n_clicks'),
         Input('blur-btn', 'n_clicks'),
         Input('edge-btn', 'n_clicks'),
         Input('grayscale-btn', 'n_clicks'),
@@ -125,13 +180,12 @@ app.layout = html.Div(
         Input('redo-btn', 'n_clicks')
     ],
     [
-        State('crop-slider', 'value'),
         State('blur-slider', 'value'),
         State('threshold1-slider', 'value'),
         State('threshold2-slider', 'value')
     ]
 )
-def process_image(contents, crop_clicks, blur_clicks, edge_clicks, grayscale_clicks, sharpen_clicks, invert_clicks, undo_clicks, redo_clicks, crop_ratio, blur_kernel, threshold1, threshold2):
+def process_image(contents, auto_crop_clicks, blur_clicks, edge_clicks, grayscale_clicks, sharpen_clicks, invert_clicks, undo_clicks, redo_clicks, blur_kernel, threshold1, threshold2):
     global uploaded_image, processed_image, history, redo_stack
 
     ctx = dash.callback_context
@@ -164,16 +218,11 @@ def process_image(contents, crop_clicks, blur_clicks, edge_clicks, grayscale_cli
             history.append(processed_image.copy())
             return html.Img(src=image_to_base64(processed_image), style={"width": "90%", "borderRadius": "10px"})
 
-    if trigger_id == 'crop-btn':
+    if trigger_id == 'auto-crop-btn':
         if processed_image is not None:
-            h, w = processed_image.shape[:2]
-            y1, y2 = int(h * crop_ratio / 100), int(h * (1 - crop_ratio / 100))
-            x1, x2 = int(w * crop_ratio / 100), int(w * (1 - crop_ratio / 100))
-            if y2 > y1 and x2 > x1:
-                cropped = processed_image[y1:y2, x1:x2]
-                processed_image = cv2.resize(cropped, (w, h))
-                history.append(processed_image.copy())
-                redo_stack.clear()
+            processed_image = auto_crop_license_plate(processed_image)
+            history.append(processed_image.copy())
+            redo_stack.clear()
 
     if trigger_id == 'blur-btn':
         if processed_image is not None:
