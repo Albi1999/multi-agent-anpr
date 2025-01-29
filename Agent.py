@@ -420,6 +420,75 @@ class LicensePlateAgent:
                 img = self.scale_and_resize(cv2.imread(curr_path))
                 img = self.perspective_correction(img=img)
                 img = self.adaptive_thresholding(img=img,image_path= curr_path, mode='saving')
+
+    def character_segmentation(self, image_path, deviation=10):
+        image_path = image_path or self.IMAGE_PATH
+        img_nmb = re.search(r'\d+', image_path).group()
+        
+        # Process image once
+        img = self.scale_and_resize(cv2.imread(image_path))
+        img = self.perspective_correction(img=img)
+        img = self.adaptive_thresholding(img=img)
+        img = self.paint_image(img)
+        img = self.scale_and_resize(img)
+        img_copy = img.copy()
+        points = []
+        counter = 0
+        
+        def mouse_callback(event, x, y, flags, param):
+            nonlocal points, img_copy
+            if event == cv2.EVENT_LBUTTONDOWN and len(points) < 4:
+                points.append((x, y))
+                cv2.circle(img_copy, (x, y), 3, (255, 0, 0), -1)
+                
+                if len(points) == 4:
+                    points_arr = np.array(points)
+                    x_sorted = points_arr[np.argsort(points_arr[:, 0])]
+                    left = x_sorted[:2]
+                    right = x_sorted[2:]
+                    left = left[np.argsort(left[:, 1])]
+                    right = right[np.argsort(right[:, 1])]
+                    
+                    sorted_points = np.array([left[0], right[0], right[1], left[1]], dtype=np.int32)
+                    cv2.polylines(img_copy, [sorted_points], True, (255, 0, 0), 2)
+        
+        cv2.namedWindow('Select Characters')
+        cv2.setMouseCallback('Select Characters', mouse_callback)
+        
+        while True:
+            cv2.imshow('Select Characters', img_copy)
+            key = cv2.waitKey(1) & 0xFF
+            
+            if len(points) == 4 and key == ord('f'):
+                points_arr = np.array(points)
+                x = min(points_arr[:, 0])
+                y = min(points_arr[:, 1])
+                w = max(points_arr[:, 0]) - x
+                h = max(points_arr[:, 1]) - y
+                
+                roi = img[y:y+h, x:x+w]
+                scale = min(20.0/w, 20.0/h)
+                new_w = int(w * scale)
+                new_h = int(h * scale)
+                char_resized = cv2.resize(roi, (new_w, new_h))
+                
+                mnist_size = np.zeros((28, 28), dtype=np.uint8)
+                x_offset = (28 - new_w) // 2
+                y_offset = (28 - new_h) // 2
+                mnist_size[y_offset:y_offset+new_h, x_offset:x_offset+new_w] = char_resized
+                
+                os.makedirs(f"VCS_Project/results/license_plates/segmented_plate.{img_nmb}", exist_ok=True)
+                cv2.imwrite(f"VCS_Project/results/license_plates/segmented_plate.{img_nmb}/character_{counter}.png", mnist_size)
+                
+                counter += 1
+                points = []
+                img_copy = img.copy()  # Reset image for next selection
+                
+            elif key == 27:  # ESC
+                break
+                
+        cv2.destroyAllWindows()
+        return None
     
     
     
