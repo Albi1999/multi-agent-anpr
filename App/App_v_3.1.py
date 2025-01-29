@@ -170,50 +170,78 @@ app.layout = html.Div(
                         html.Button('Auto Crop License Plate', id='auto-crop-btn', n_clicks=0, 
                                   style={"width": "100%", "padding": "10px", "backgroundColor": "#28a745", "color": "#fff", "border": "none", "borderRadius": "5px", "marginTop": "10px"}),
 
-                        # Image Adjustment Controls with real-time updates
-                        html.Div("Exposure Adjustment", style={"marginTop": "20px"}),
-                        dcc.Slider(
-                            id='exposure-slider',
-                            min=0.5,
-                            max=2.0,
-                            step=0.1,
-                            value=1.0,
-                            marks={i/10: str(i/10) for i in range(5, 21, 5)},
-                            tooltip={"placement": "bottom", "always_visible": True},
-                        ),
                         
-                        html.Div("Contrast Adjustment", style={"marginTop": "20px"}),
-                        dcc.Slider(
-                            id='contrast-slider',
-                            min=0.5,
-                            max=2.0,
-                            step=0.1,
-                            value=1.0,
-                            marks={i/10: str(i/10) for i in range(5, 21, 5)},
-                            tooltip={"placement": "bottom", "always_visible": True},
-                        ),
+                        html.Button('Exposure Options', id='toggle-exposure-options', n_clicks=0, 
+                                  style={"width": "100%", "padding": "10px", "backgroundColor": "#ff8700", "color": "#fff", "border": "none", "borderRadius": "5px", "marginTop": "10px"}),
 
-                        html.Div("Brightness Adjustment", style={"marginTop": "20px"}),
-                        dcc.Slider(
-                            id='brightness-slider',
-                            min=-50,
-                            max=50,
-                            step=1,
-                            value=0,
-                            marks={i: str(i) for i in range(-50, 51, 25)},
-                            tooltip={"placement": "bottom", "always_visible": True},
-                        ),
+                        html.Div(id='exposure-options', style={"display": "none", "marginTop": "20px"}, children=[
+                            html.Div("Exposure Adjustment", style={"marginBottom": "10px"}),
+                            dcc.Slider(
+                                id='exposure-slider',
+                                min=0.5,
+                                max=2.0,
+                                step=0.1,
+                                value=1.0,
+                                marks={i/10: str(i/10) for i in range(5, 21, 5)},
+                                tooltip={"placement": "bottom", "always_visible": True},
+                            ),
+                            html.Button('Apply Exposure', id='exposure-btn', n_clicks=0, 
+                                      style={"width": "100%", "padding": "10px", "backgroundColor": "#ff8700", "color": "#fff", "border": "none", "borderRadius": "5px", "marginTop": "10px"})
+                        ]),
 
-                        html.Div("Threshold Block Size", style={"marginTop": "20px"}),
-                        dcc.Slider(
-                            id='threshold-block-slider',
-                            min=3,
-                            max=51,
-                            step=2,
-                            value=11,
-                            marks={i: str(i) for i in range(3, 52, 6)},
-                            tooltip={"placement": "bottom", "always_visible": True},
-                        ),
+                        html.Button('Contrast Options', id='toggle-contrast-options', n_clicks=0, 
+                                  style={"width": "100%", "padding": "10px", "backgroundColor": "#8a00dc", "color": "#fff", "border": "none", "borderRadius": "5px", "marginTop": "10px"}),
+
+                        html.Div(id='contrast-options', style={"display": "none", "marginTop": "20px"}, children=[
+                            html.Div("Contrast Adjustment", style={"marginBottom": "10px"}),
+                            dcc.Slider(
+                                id='contrast-slider',
+                                min=0.5,
+                                max=2.0,
+                                step=0.1,
+                                value=1.0,
+                                marks={i/10: str(i/10) for i in range(5, 21, 5)},
+                                tooltip={"placement": "bottom", "always_visible": True},
+                            ),
+                            html.Button('Apply Contrast', id='contrast-btn', n_clicks=0, 
+                                      style={"width": "100%", "padding": "10px", "backgroundColor": "#8a00dc", "color": "#fff", "border": "none", "borderRadius": "5px", "marginTop": "10px"})
+                        ]),
+
+                        html.Button('Brightness Options', id='toggle-brightness-options', n_clicks=0, 
+                                  style={"width": "100%", "padding": "10px", "backgroundColor": "#dc3545", "color": "#fff", "border": "none", "borderRadius": "5px", "marginTop": "10px"}),
+
+                        html.Div(id='brightness-options', style={"display": "none", "marginTop": "20px"}, children=[
+                            html.Div("Brightness Adjustment", style={"marginBottom": "10px"}),
+                            dcc.Slider(
+                                id='brightness-slider',
+                                min=-50,
+                                max=50,
+                                step=1,
+                                value=0,
+                                marks={i: str(i) for i in range(-50, 51, 25)},
+                                tooltip={"placement": "bottom", "always_visible": True},
+                            ),
+                            html.Button('Apply Brightness', id='brightness-btn', n_clicks=0, 
+                                      style={"width": "100%", "padding": "10px", "backgroundColor": "#dc3545", "color": "#fff", "border": "none", "borderRadius": "5px", "marginTop": "10px"})
+                        ]),
+
+                        html.Button('Threshold Options', id='toggle-threshold-options', n_clicks=0, 
+                                  style={"width": "100%", "padding": "10px", "backgroundColor": "#ffc107", "color": "#fff", "border": "none", "borderRadius": "5px", "marginTop": "10px"}),
+
+                        html.Div(id='threshold-options', style={"display": "none", "marginTop": "20px"}, children=[
+                            html.Div("Threshold Block Sizet", style={"marginBottom": "10px"}),
+                            dcc.Slider(
+                                id='threshold-block-slider',
+                                min=3,
+                                max=51,
+                                step=2,
+                                value=11,
+                                marks={i: str(i) for i in range(3, 52, 6)},
+                                tooltip={"placement": "bottom", "always_visible": True},
+                            ),
+                            html.Button('Apply Threshold', id='threshold-btn', n_clicks=0, 
+                                      style={"width": "100%", "padding": "10px", "backgroundColor": "#ffc107", "color": "#fff", "border": "none", "borderRadius": "5px", "marginTop": "10px"})
+                        ]),
 
                         
                         html.Button('Blur Options', id='toggle-blur-options', n_clicks=0, 
@@ -285,16 +313,25 @@ app.layout = html.Div(
 )
 
 # Callback for image processing
+# Callback for image processing
 @app.callback(
     [
         Output('image-display', 'children'),
         Output('blur-options', 'style'),
+        Output('exposure-options', 'style'),
+        Output('contrast-options', 'style'),
+        Output('brightness-options', 'style'),
+        Output('threshold-options', 'style'),
         Output('download-link', 'href')
     ],
     [
         Input('upload-image', 'contents'),
         Input('auto-crop-btn', 'n_clicks'),
         Input('blur-btn', 'n_clicks'),
+        Input('exposure-btn', 'n_clicks'),
+        Input('contrast-btn', 'n_clicks'),
+        Input('brightness-btn', 'n_clicks'),
+        Input('threshold-btn', 'n_clicks'),
         Input('grayscale-btn', 'n_clicks'),
         Input('sharpen-btn', 'n_clicks'),
         Input('invert-btn', 'n_clicks'),
@@ -302,25 +339,35 @@ app.layout = html.Div(
         Input('redo-btn', 'n_clicks'),
         Input('edge-btn', 'n_clicks'),
         Input('toggle-blur-options', 'n_clicks'),
-        Input('exposure-slider', 'value'), 
-        Input('contrast-slider', 'value'),  
-        Input('brightness-slider', 'value')
+        Input('toggle-exposure-options', 'n_clicks'),
+        Input('toggle-contrast-options', 'n_clicks'),
+        Input('toggle-brightness-options', 'n_clicks'),
+        Input('toggle-threshold-options', 'n_clicks')
     ],
     [
         State('blur-slider', 'value'),
-        State('blur-options', 'style')
+        State('blur-options', 'style'),
+        State('exposure-slider', 'value'),
+        State('exposure-options', 'style'),
+        State('contrast-slider', 'value'),
+        State('contrast-options', 'style'),
+        State('brightness-slider', 'value'),
+        State('brightness-options', 'style'),
+        State('threshold-block-slider', 'value'),
+        State('threshold-options', 'style')
     ]
 )
+def process_image(contents, auto_crop_clicks, blur_clicks, exposure_clicks, contrast_clicks, brightness_clicks, 
+                  threshold_clicks, grayscale_clicks, sharpen_clicks, invert_clicks, undo_clicks, redo_clicks, edge_clicks,
+                  toggle_blur_clicks, toggle_exposure_clicks, toggle_contrast_clicks, toggle_brightness_clicks, toggle_threshold_clicks,
+                  blur_kernel, blur_style, exposure_value, exposure_style, contrast_value, contrast_style, 
+                  brightness_value, brightness_style, threshold_block, threshold_style):
 
-def process_image(contents, auto_crop_clicks, blur_clicks, grayscale_clicks, edge_clicks, 
-                 sharpen_clicks, invert_clicks, undo_clicks, redo_clicks, toggle_blur_clicks,
-                 exposure_value, contrast_value, brightness_value,
-                 blur_kernel, blur_style):
     global uploaded_image, processed_image, history, redo_stack
 
     ctx = dash.callback_context
     if not ctx.triggered:
-        return None, blur_style, ""
+        return None, blur_style, exposure_style, contrast_style, brightness_style, threshold_style, ""
 
     trigger_id = ctx.triggered[0]['prop_id'].split('.')[0]
 
@@ -337,114 +384,78 @@ def process_image(contents, auto_crop_clicks, blur_clicks, grayscale_clicks, edg
             encoded_image = image_to_base64(uploaded_image, format="png")
             return (
                 html.Img(src=encoded_image, style={"width": "90%", "borderRadius": "10px"}), 
-                blur_style, 
+                blur_style, exposure_style, contrast_style, brightness_style, threshold_style,
                 f"data:image/png;base64,{encoded_image.split(',')[1]}"
             )
 
+    # Toggle option panels
+    toggle_dict = {
+        'toggle-blur-options': blur_style,
+        'toggle-exposure-options': exposure_style,
+        'toggle-contrast-options': contrast_style,
+        'toggle-brightness-options': brightness_style,
+        'toggle-threshold-options': threshold_style
+    }
 
+    if trigger_id in toggle_dict:
+        current_style = toggle_dict[trigger_id]
+        new_style = {"display": "block"} if current_style == {"display": "none"} else {"display": "none"}
+        return (dash.no_update, 
+                new_style if trigger_id == 'toggle-blur-options' else blur_style,
+                new_style if trigger_id == 'toggle-exposure-options' else exposure_style,
+                new_style if trigger_id == 'toggle-contrast-options' else contrast_style,
+                new_style if trigger_id == 'toggle-brightness-options' else brightness_style,
+                new_style if trigger_id == 'toggle-threshold-options' else threshold_style,
+                "")
 
-    if trigger_id == 'exposure-slider':
-        if processed_image is not None:
-            processed_image = adjust_exposure(processed_image)
-            history.append(processed_image.copy())
-            redo_stack.clear()
-
-    if trigger_id == 'contrast-slider':
-        if processed_image is not None:
-            processed_image = adjust_contrast(processed_image)
-            history.append(processed_image.copy())
-            redo_stack.clear()
-    
-    if trigger_id == 'brightness-slider':
-        if processed_image is not None:
-            processed_image = adjust_brightness(processed_image)
-            history.append(processed_image.copy())
-            redo_stack.clear()
-
-    if trigger_id == 'edge-btn':
-        if processed_image is not None:
-            processed_image = improved_edge_detection(processed_image)
-
-    if trigger_id == 'auto-crop-btn':
-        if processed_image is not None:
+    # Apply transformations
+    if processed_image is not None:
+        if trigger_id == 'auto-crop-btn':
             processed_image = auto_crop_license_plate(processed_image)
-            history.append(processed_image.copy())
-            redo_stack.clear()
-
-    if trigger_id == 'blur-btn':
-        if processed_image is not None:
-            blur_kernel = max(1, blur_kernel // 2 * 2 + 1)
+        elif trigger_id == 'blur-btn':
+            blur_kernel = max(1, blur_kernel // 2 * 2 + 1)  # Ensure odd kernel size
             processed_image = cv2.GaussianBlur(processed_image, (blur_kernel, blur_kernel), 0)
-            history.append(processed_image.copy())
-            redo_stack.clear()
-
-#    if trigger_id == 'edge-btn':
-#        if processed_image is not None:
-#            min_thresh = int((threshold1 / 255.0) * 100)  # Scale to 0-100 range
-#            max_thresh = 255  # Keep maximum brightness
-#            edges = improved_edge_detection(processed_image, min_thresh, max_thresh)
-#            processed_image = cv2.cvtColor(edges, cv2.COLOR_GRAY2BGR)
-#            history.append(processed_image.copy())
-#            redo_stack.clear()
-
-    if trigger_id == 'grayscale-btn':
-        if processed_image is not None:
+        elif trigger_id == 'exposure-btn':
+            processed_image = adjust_exposure(processed_image, exposure_value)
+        elif trigger_id == 'contrast-btn':
+            processed_image = adjust_contrast(processed_image, contrast_value)
+        elif trigger_id == 'brightness-btn':
+            processed_image = adjust_brightness(processed_image, brightness_value)
+        elif trigger_id == 'edge-btn':
+            processed_image = improved_edge_detection(processed_image, 50, 200)
+        elif trigger_id == 'grayscale-btn':
             processed_image = cv2.cvtColor(processed_image, cv2.COLOR_BGR2GRAY)
             processed_image = cv2.cvtColor(processed_image, cv2.COLOR_GRAY2BGR)
-            history.append(processed_image.copy())
-            redo_stack.clear()
-
-    if trigger_id == 'sharpen-btn':
-        if processed_image is not None:
+        elif trigger_id == 'sharpen-btn':
             kernel = np.array([[0, -1, 0], [-1, 5, -1], [0, -1, 0]])
             processed_image = cv2.filter2D(processed_image, -1, kernel)
-            history.append(processed_image.copy())
-            redo_stack.clear()
-
-    if trigger_id == 'invert-btn':
-        if processed_image is not None:
+        elif trigger_id == 'invert-btn':
             processed_image = cv2.bitwise_not(processed_image)
-            history.append(processed_image.copy())
-            redo_stack.clear()
-    
-    if trigger_id == 'toggle-blur-options':
-        if blur_style == {"display": "none"}:
-            return dash.no_update, {"display": "block"}, ""
-        else:
-            return dash.no_update, {"display": "none"}, ""
+        elif trigger_id == 'threshold-btn':
+            processed_image = adaptive_thresholding(processed_image, threshold_block, 2)
 
-    if trigger_id == 'undo-btn':
-        if len(history) > 1:
-            redo_stack.append(history.pop())
-            processed_image = history[-1].copy()
-            encoded_image = image_to_base64(processed_image, format="png")
-            return (
-                html.Img(src=encoded_image, style={"width": "90%", "borderRadius": "10px"}), 
-                blur_style, 
-                f"data:image/png;base64,{encoded_image.split(',')[1]}"
-            )
+        # Update history for undo/redo
+        history.append(processed_image.copy())
+        redo_stack.clear()
 
-    if trigger_id == 'redo-btn':
-        if redo_stack:
-            processed_image = redo_stack.pop()
-            history.append(processed_image.copy())
-            encoded_image = image_to_base64(processed_image, format="png")
-            return (
-                html.Img(src=encoded_image, style={"width": "90%", "borderRadius": "10px"}), 
-                blur_style, 
-                f"data:image/png;base64,{encoded_image.split(',')[1]}"
-            )
-    
+    # Undo and redo functionality
+    if trigger_id == 'undo-btn' and len(history) > 1:
+        redo_stack.append(history.pop())
+        processed_image = history[-1].copy()
+    elif trigger_id == 'redo-btn' and redo_stack:
+        processed_image = redo_stack.pop()
+        history.append(processed_image.copy())
 
-    # Convert the processed image to base64 for download
+    # Convert image for display
     encoded_image = image_to_base64(processed_image, format="png")
     download_href = f"data:image/png;base64,{encoded_image.split(',')[1]}"
     
     return (
-        html.Img(src=image_to_base64(processed_image), style={"width": "90%", "borderRadius": "10px"}), 
-        blur_style, 
+        html.Img(src=encoded_image, style={"width": "90%", "borderRadius": "10px"}), 
+        blur_style, exposure_style, contrast_style, brightness_style, threshold_style,
         download_href
     )
+
 
 
 # Run the app
