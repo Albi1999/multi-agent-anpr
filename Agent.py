@@ -228,10 +228,8 @@ class LicensePlateAgent:
         resized_plate = cv2.resize(img, (target_width, target_height))
         return resized_plate
     
-    
-    
 
-    
+
     ############ Adaptive Threshold  #############
     
     def select_corners(self,image):
@@ -269,6 +267,37 @@ class LicensePlateAgent:
             elif key == 27:  # ESC to cancel
                 cv2.destroyAllWindows()
                 break
+            
+            
+    def perspective_correction(self, img=None, image_path=None):
+
+
+        og_img = img.copy()
+
+        src = self.select_corners(og_img)
+
+
+        # Get the source points (i.e. the 4 corner points)
+       # src = np.squeeze(license_cont).astype(np.float32)
+
+        height = og_img.shape[0] 
+        width = og_img.shape[1]
+        # Destination points (for flat parallel)
+        dst = np.float32([[0, 0], [0, height - 1], [width - 1, 0], [width - 1, height - 1]])
+
+        # Order the points correctly
+        license_cont = self.order_points(src)
+     #   dst = self.order_points(dst)
+
+        # Get the perspective transform
+        M = cv2.getPerspectiveTransform(license_cont, dst)
+
+        # Warp the image
+        img_shape = (width, height)
+        enhanced_img = cv2.warpPerspective(og_img, M, img_shape, flags=cv2.INTER_LINEAR)
+
+        return enhanced_img
+    
 
     def adaptive_thresholding(self, image_path=None, img=None, block_size=25, constant=1, mode='processing'):
         current_thresh = None  # Store current threshold image
