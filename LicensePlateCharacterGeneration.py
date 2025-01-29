@@ -166,8 +166,6 @@ def create_augmented_pair(clean_image):
             iaa.AverageBlur(k=(2, 5))
         ])),
         
-
-        # TODO : trial with taking this out or making much weaker 
         # Perspective and distance variations
         iaa.Sometimes(0.7, iaa.Sequential([
             # More aggressive perspective changes
@@ -178,14 +176,6 @@ def create_augmented_pair(clean_image):
             iaa.Affine(scale=(0.8, 1.2)) # TODO : fix 
         ])),
         
-        # Lighting and exposure effects
-        # I think they fuck up the picture too much, also don't know if it really makes sense on black/white images
-       # iaa.Sometimes(0.8, iaa.OneOf([
-            # Contrast changes
-       #     iaa.LinearContrast((0.6, 1.4)),
-            # Uneven lighting
-       #     iaa.SigmoidContrast(gain=(5, 10), cutoff=(0.3, 0.7))
-       # ])),
         
         # Image quality and noise
         iaa.Sometimes(0.7, iaa.OneOf([
@@ -204,23 +194,6 @@ def create_augmented_pair(clean_image):
         ])),
         
 
-        # this is problematic bc it then doesn't find any contours sometimes
-       
-      #  # Weather effects (use sparingly)
-     #   iaa.Sometimes(0.3, iaa.OneOf([
-            # Light rain effect
-        #    iaa.RainLayer(
-        #        density=(0.1, 0.2),
-        #        density_uniformity=0.2,
-        #        drop_size=(0.01, 0.02),
-        #        drop_size_uniformity=0.1,
-        #        angle=(-15, 15),
-        #        speed=(0.1, 0.2),
-        ##        blur_sigma_fraction=(0.001, 0.001)
-         #   ),
-            # Light fog
-        #    iaa.Fog()
-       # ])),
            
     ])
     
@@ -228,6 +201,170 @@ def create_augmented_pair(clean_image):
     noisy_image = augmenter(image=image)
     
     return Image.fromarray(noisy_image)
+
+
+
+
+def create_augmented_pair_edge_roughness(clean_image):
+    """Create noisy versions based on edge roughness"""
+
+    # TODO : Preprocessing with contour finding doesn't work if image is too fizzy (i.e. right now values -2 and 2, already doesn't work)
+    image = np.array(clean_image)
+
+    # in cv2, for contours background should be black and object should be white
+    
+    image = cv2.bitwise_not(image)
+
+
+    contours, _ = cv2.findContours(image, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+    
+    contour_areas = [(contour,cv2.contourArea(contour)) for contour in contours]
+
+    # Sort contour areas by the area (from biggest to smallest)
+    contour_areas = sorted(contour_areas, key=lambda x: x[1], reverse=True)
+    
+    # Now, the idea is : 
+    # First draw in the biggest contour in the color of the object (white) (this will overdraw the wholes in numbers etc.)
+    # But then draw in the smaller contours in black again
+    for idx, contours in enumerate(contour_areas):
+        if idx == 0: # biggest area
+            cv2.drawContours(image, [contours[0] + np.random.randint(-2, 2, contours[0].shape)], -1, 255, -1)
+        else: # smaller areas
+            cv2.drawContours(image, [contours[0] + np.random.randint(-2,2, contours[0].shape)], -1, 0, -1)
+      
+
+    cv2.imshow('edge_roughness', image)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
+    exit()
+
+    # Invert again (bc with current logic, preprocessing expects white background and black object)
+    image = cv2.bitwise_not(image)
+    
+
+
+    return Image.fromarray(image)
+
+
+def create_augmented_pair_thickness(clean_image, area = (5,8)):
+    """
+    Erosion & Dilation to simulate thickness variations.
+    https://docs.opencv.org/3.4/db/df6/tutorial_erosion_dilatation.html
+    """
+
+    image = np.array(clean_image)
+
+    kernel_size = random.randint(area[0], area[1])
+    kernel = np.ones((kernel_size, kernel_size), np.uint8)
+    if random.random() > 0.5:
+        image = cv2.erode(image,kernel)
+        cv2.imshow('erode', image)
+        cv2.waitKey(0)
+        cv2.destroyAllWindows()
+       
+        return image
+    
+    image = cv2.dilate(image, kernel)
+    cv2.imshow('dilate', image)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
+  
+    return image
+
+
+
+
+def create_augmented_pair_perspective_skew(clean_image):
+
+    image = np.array(clean_image)
+
+    # Just needed here, since fit_output resizes image to original size and does a black background automatically,
+    # so like this we can just use the image as it is
+    image = cv2.bitwise_not(image)
+
+    # Perspective variations
+    augmenter = iaa.PerspectiveTransform(scale=(0.05, 0.2), keep_size=True, fit_output=True)
+
+
+    image = augmenter(image=image)
+
+    # Invert again for preprocessing logic later on
+    image = cv2.bitwise_not(image)
+
+
+    cv2.imshow('perspective_correction', image)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
+   # exit()
+
+    # TODO : add perspective correction again ??? bc with actual license plates we correct always, but I don't know if that makes sense here like that or not
+    # Or maybe even try to train on skewed perspectives, don't know if vAE can handle it, but maybe even sometimes letting it skewed can improve readability, 
+    # atleast for humans ; we have to test 
+    # TODO : or just instead of that, we can add that characters are pushed more together bc I think that is what happens when we correct the perspective ;
+    # so make characters appear more tight together, for a P/A etc holes more small etc. 
+    return Image.fromarray(image)
+
+    
+
+def create_augmented_pair_imagequality(clean_image):
+    """Create noisy versions based on image quality"""
+
+    image = np.array(clean_image)
+
+    # I took out gaussian noise, bc in the real license plate image, with adaptive thresholding we can remove noise or then with the painting tool,
+    # thus we will not have like noisy dots around the image anyway
+    # Image quality
+    augmenter = iaa.JpegCompression(compression=(70, 90)) 
+
+
+    image = augmenter(image=image)
+
+    cv2.imshow('image_quality', image)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
+    exit()
+
+    return Image.fromarray(image)
+
+
+def create_augemented_pair_character_degradation(clean_image):
+    # TODO : never this extreme in images, but maybe helps a bit ?
+    """Create noisy versions based on character degradation"""
+    
+    image = np.array(clean_image)
+
+    # Sets pixels in image to zero per chance, i.e. the character must be white and the background black
+    image = cv2.bitwise_not(image)
+
+    augmenter = iaa.Dropout(p=(0.02,0.05))
+
+    image = augmenter(image=image)
+
+    # Invert again for preprocessing logic later on
+    image = cv2.bitwise_not(image)
+
+    cv2.imshow('character_degradation', image)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
+    exit()
+
+    return Image.fromarray(image)
+
+
+
+def create_augmented_pair_occlusion(clean_image):
+    """Create noisy versions based on occlusion"""
+    pass
+
+def create_augmented_pair_blur(clean_image):
+    """Create noisy versions based on blur"""
+    pass
+
+
+
+
+
+
 
 
 
@@ -250,29 +387,89 @@ def preprocessing(image):
     image = cv2.bitwise_not(image)
 
 
+    # New logic : 
+    # 1. We know that the character is white and the background is black, i.e. pixel values are 0 for the background and >0 for the character
+    # 2. To find a rectangle around the character, we just look at all pixels that are != 0 and find the bounding rectangle around them
+    # That means : Find the white pixels that is most left in regard to all white pixels, most right, most top and most bottom
+    # Use these to gather the 4 corner points of the rectangle and then crop the image to this rectangle
+    # Then do the normal resizing steps
+
+    # Find all white pixels
+    white_pixels = np.where(image > 0)
+
+    # Get the bounds
+    min_y = np.min(white_pixels[0])  # top
+    max_y = np.max(white_pixels[0])  # bottom
+    min_x = np.min(white_pixels[1])  # left
+    max_x = np.max(white_pixels[1])  # right
+
+
+    reg_of_interest = image[min_y:max_y, min_x:max_x] 
+
+    # Get width and height of region of interest
+    h, w = reg_of_interest.shape
+
+    # Calculate scaling factor to fit in 20x20 box while maintaining aspect ratio
+    scale = min(20.0/w, 20.0/h)
+    new_w = int(w * scale)
+    new_h = int(h * scale)
+    
+    # Resize character to fit in 20x20 box
+    try:
+        char_resized = cv2.resize(reg_of_interest, (new_w, new_h))
+    except cv2.error as e:
+        print('Error resizing the image ; skipping this image :', e)
+        return None 
+    
+    # Create 28x28 blank (black) image
+    mnist_size = np.zeros((28, 28), dtype=np.uint8)
+    
+    # Calculate position to center character
+    x_offset = (28 - new_w) // 2
+    y_offset = (28 - new_h) // 2
+    
+    # Place character in center of 28x28 image
+    mnist_size[y_offset:y_offset+new_h, x_offset:x_offset+new_w] = char_resized
+    correct_img = mnist_size
+
+   # cv2.imshow('correct_img', correct_img)
+   # cv2.waitKey(0)
+   # cv2.destroyAllWindows()
+  
+
+    return Image.fromarray(correct_img)
+
+
+
+    '''
     # Apply canny edge detection, for contours 
     canny = cv2.Canny(image, 100, 200)
 
 
+
+
     contours, _ = cv2.findContours(canny, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-   # cv2.drawContours(image, contours, -1, 128, 2)
-   # cv2.imshow('img', image)
-   # cv2.waitKey(0)
-   # cv2.destroyAllWindows()
+
 
    # Get all the areas of the contours
     areas = [cv2.contourArea(contour) for contour in contours]
     # Get the max area (since we have black surrounding and white character, the character will have the biggest area)
     max_area = max(areas)
 
-    
+
     correct_img = None 
     for contour in sorted(contours, key=lambda x: cv2.boundingRect(x)[0]):
         x, y, w, h = cv2.boundingRect(contour)
    
         area = cv2.contourArea(contour)
         if area == max_area:
-            reg_of_interest = image[y:y+h, x:x+w] # region of interest : the rectangle area that we found ; also take it from the original image!
+
+
+            reg_of_interest = image[y:y+h, x:x+w] # region of interest : the rectangle area that we found
+
+         
+
+
 
    
             # Calculate scaling factor to fit in 20x20 box while maintaining aspect ratio
@@ -299,9 +496,41 @@ def preprocessing(image):
             correct_img = mnist_size
 
         
-
+    cv2.imshow('correct_img', correct_img)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
+   # exit()
 
     return Image.fromarray(correct_img)
+    '''
+
+import random 
+def generate_dataset_tester(output_dir, font_path):
+    """Used to test the single augmentation methods"""
+    # Define character set (German license plates)
+    chars = list('ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789')
+
+    clean_dir = output_dir + '/clean'
+    noisy_dir = output_dir + '/noisy'
+    
+    # Generate multiple versions of each character
+    for char in chars:
+
+        clean_image = generate_single_character(char, font_path)
+
+
+        for i in range(1):  
+
+            noisy_image_processed = None 
+            while noisy_image_processed == None: 
+                # Generate corresponding noisy image
+                noisy_image = create_augemented_pair_character_degradation(clean_image)
+                # Preprocess image
+                noisy_image_processed = preprocessing(noisy_image)
+            
+            noisy_image_processed.save(noisy_dir + f'/{char}/' + f'{char}_{i}.png')
+
+
 
 
 def generate_dataset(output_dir, font_path):
@@ -365,20 +594,8 @@ def generate_dataset(output_dir, font_path):
 
 
 
+#generate_dataset('data/synthetic/german_font','fonts/FE-FONT.TTF')
+generate_dataset_tester('VCS_Project/data/synthetic/german_font','VCS_Project/fonts/FE-FONT.TTF')
 
 
-
-#img_b = generate_single_character('B','/Users/marlon/Desktop/sem/vs/vs_proj/VCS_Project/fonts/FE-FONT.TTF')
-
-#create_augmented_pair(img_A).show()
-#create_directories('/Users/marlon/Desktop/sem/vs/vs_proj/VCS_Project/data/synthetic/german_font')
-
-# Marlon path
-#generate_dataset('/Users/marlon/Desktop/sem/vs/vs_proj/VCS_Project/data/synthetic/german_font','/Users/marlon/Desktop/sem/vs/vs_proj/VCS_Project/fonts/FE-FONT.TTF')
-
-generate_dataset('data/synthetic/german_font','fonts/FE-FONT.TTF')
-
-#adaptive_thresholding('/Users/marlon/Desktop/sem/vs/vs_proj/VCS_Project/data/synthetic/german_font/clean/0/', '0')
-#cv2.waitKey(0)
-#cv2.destroyAllWindows()
 
