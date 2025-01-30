@@ -297,11 +297,11 @@ def create_augmented_pair_perspective_skew(clean_image):
     cv2.destroyAllWindows()
    # exit()
 
-    # TODO : add perspective correction again ??? bc with actual license plates we correct always, but I don't know if that makes sense here like that or not
-    # Or maybe even try to train on skewed perspectives, don't know if vAE can handle it, but maybe even sometimes letting it skewed can improve readability, 
-    # atleast for humans ; we have to test 
+
     # TODO : or just instead of that, we can add that characters are pushed more together bc I think that is what happens when we correct the perspective ;
     # so make characters appear more tight together, for a P/A etc holes more small etc. 
+
+
     return Image.fromarray(image)
 
     
@@ -352,16 +352,257 @@ def create_augemented_pair_character_degradation(clean_image):
 
 
 
-def create_augmented_pair_occlusion(clean_image):
+
+
+
+def get_edge_segment(canny_image, start_point, segment_length=5):
+    """Helper function for create_augmented_pair_occlusion"""
+    height, width = canny_image.shape
+    y, x = start_point
+    segment = [(y, x)]
+    
+    # Define 8-connected neighborhood (such that we have movement in all directions from the current pixel)
+    neighbors = [(-1,-1), (-1,0), (-1,1),
+                (0,-1),         (0,1),
+                (1,-1),  (1,0),  (1,1)]
+    
+    # Follow edge in both directions
+    for direction in [1, -1]:  # Forward and backward (the idea is that if it already moved in one direction, these pixels will be in segment and thus in the next iteration, it will move in the other direction)
+        current_y, current_x = y, x
+        steps = 0
+        
+        while steps < segment_length:
+            # Look for next edge pixel in neighborhood
+            found_next = False
+            for dy, dx in neighbors:
+                ny, nx = current_y + dy, current_x + dx
+                
+                # Check bounds and if it's an edge pixel
+                if (0 <= ny < height and 0 <= nx < width and 
+                    canny_image[ny, nx] > 0 and 
+                    (ny, nx) not in segment):
+                    segment.append((ny, nx))
+                    current_y, current_x = ny, nx
+                    found_next = True
+                    break
+            
+            if not found_next:
+                break  # No more connected edge pixels
+                
+            steps += 1
+    
+    return segment
+
+
+def remove_pixels_segment(image, edge_segment, length_max = 30):
+    height, width = image.shape
+    result = image.copy()  
+    
+    neighbors = [(-1,-1), (-1,0), (-1,1),
+                (0,-1),         (0,1),
+                (1,-1),  (1,0),  (1,1)]
+
+ 
+    already_removed = set(edge_segment)
+    
+
+    for idx, (y, x) in enumerate(edge_segment):
+        current_y, current_x = y, x
+        result[current_y, current_x] = 0
+        
+        removal_length = np.random.randint(1, length_max)
+        steps = 0
+
+        while steps < removal_length:
+            # Shuffle neighbors to avoid bias in direction
+            random_neighbors = np.random.permutation(neighbors)
+            found_next = False
+            
+            for dy, dx in random_neighbors:
+                ny, nx = current_y + dy, current_x + dx
+
+                if (0 <= ny < height and 0 <= nx < width and 
+                    result[ny, nx] > 0 and 
+                    (ny, nx) not in already_removed):
+                    
+                    result[ny, nx] = 0
+                    already_removed.add((ny, nx))  
+                    current_y, current_x = ny, nx
+                    steps += 1
+                    found_next = True
+                    break
+            
+            if not found_next:
+                break  # No valid pixels found, stop this removal sequence
+
+    return result
+
+
+def create_augmented_pair_occlusion(clean_image, n_segments = 10):
     """Create noisy versions based on occlusion"""
-    pass
+    # Which pixels ? --> we don't want to remove the ones "inside" of the character,
+    # but rather work around the edges and remove parts there, at some areas more than others
+    # Therefore, usy Canny Edge Detector first, and around these edges, we do some erosion 
+
+    image = np.array(clean_image)
+
+    # Since canny stores edges as white, might aswell make the character now white for consistency (and background black)
+    image = cv2.bitwise_not(image)
+
+
+    # Use canny edge detection to find edges
+    canny = cv2.Canny(image, 100, 200)
+
+    # canny stores the edge locations as white pixels 
+    # Now we randomly select some white pixel and its surrounding area (area size based on some parameter)
+    # and look into all directions to decide where in the original image the white areas are and then "move into"
+    # the character to remove some parts of it 
+
+    # Get the y & x coordinates for all white pixels (i.e. edges, since we used canny)
+    edges_y , edges_x = np.where(canny > 0)
+
+    used_segments = set()
+    for _ in range(n_segments):
+
+        cond = True
+        while cond:
+            # Randomly select a starting point
+            rand_idx = np.random.randint(0, len(edges_y))
+            start_point = (edges_y[rand_idx], edges_x[rand_idx])
+
+            # Check if start_point was already used (i.e used in some segment)
+            if start_point not in used_segments:
+                cond = False 
+
+        edge_segment = get_edge_segment(canny, start_point, segment_length=5)
+
+        image = remove_pixels_segment(image, edge_segment, length_max=30)
+
+
+
+
+        # Add the segment to the used segments
+        used_segments.update(edge_segment)
+
+    # Invert again for preprocessing logic later on
+    result_image = cv2.bitwise_not(image)
+
+
+    cv2.imshow("img", result_image)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
+  #  exit()
+
+    return Image.fromarray(result_image)
+
+
+ 
+
+
+
+
+
+def create_augmented_pair_smushing(clean_image, factor=0.3, fill_holes=True):
+    # For stretching : factor > 1, for smushing : factor < 1    
+    image = np.array(clean_image)
+    height, width = image.shape
+    compressed_width = int(width * factor)
+    
+    # Resize using cv2
+    compressed_img = cv2.resize(image, (compressed_width, height), 
+                              interpolation=cv2.INTER_LINEAR)
+
+    if fill_holes:
+        height, width = compressed_img.shape
+        mask = np.zeros((height + 2, width + 2), np.uint8)
+        
+        # Clone the image for flood filling
+        fill_img = compressed_img.copy()
+        
+        # Flood fill from point (0,0)
+        cv2.floodFill(fill_img, mask, (0,0), 0)
+        
+        # Invert to get holes
+        holes = cv2.bitwise_not(fill_img)
+            
+
+   
+        # TODO : make such that holes are not filled completely
+        
+        # Combine with original image
+        filled = cv2.bitwise_and(compressed_img, holes)
+
+        cv2.imshow('smushing', filled)
+        cv2.waitKey(0)
+        cv2.destroyAllWindows()
+      
+        
+        return Image.fromarray(filled)
+    
+
+    cv2.imshow('compressed', compressed_img)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
+    exit()
+
+    return Image.fromarray(compressed_img)
+
+
+
+def create_augmented_pair_rotation(clean_image):
+    # Rotate image 
+    image = np.array(clean_image)
+
+    # this is simply since rotation will rotate whole image and then we get little black dots in the edges after rotation, with this
+    # we can in the end then just invert again 
+    image = cv2.bitwise_not(image)
+
+    augmenter = iaa.Rotate((-5, 5))
+
+    
+   
+
+
+    image = augmenter(image=image)
+
+    # Invert again 
+    image = cv2.bitwise_not(image)
+
+
+    cv2.imshow('rotation', image)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
+    exit()
+
+    return Image.fromarray(image)
+
+
+
 
 def create_augmented_pair_blur(clean_image):
     """Create noisy versions based on blur"""
-    pass
 
+    image = np.array(clean_image)
 
+    augmenter = iaa.Sequential(
+        # Camera and motion effects
+        iaa.OneOf([
+            # Motion blur for vehicle movement
+            iaa.MotionBlur(k=(7, 15), angle=(-45, 45)),
+            # Camera shake and focus issues
+            iaa.GaussianBlur(sigma=(0.5, 3.0)),
+            # Defocus blur
+            iaa.AverageBlur(k=(2, 5))
+        ]))
 
+    image = augmenter(image=image)
+
+    cv2.imshow('blur', image)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
+    exit()
+
+    return Image.fromarray(image)
 
 
 
@@ -524,11 +765,12 @@ def generate_dataset_tester(output_dir, font_path):
             noisy_image_processed = None 
             while noisy_image_processed == None: 
                 # Generate corresponding noisy image
-                noisy_image = create_augemented_pair_character_degradation(clean_image)
+                noisy_image = create_augmented_pair_smushing(clean_image, fill_holes=True)
+                noisy_image_processed = 1
                 # Preprocess image
-                noisy_image_processed = preprocessing(noisy_image)
+            #    noisy_image_processed = preprocessing(noisy_image)
             
-            noisy_image_processed.save(noisy_dir + f'/{char}/' + f'{char}_{i}.png')
+      #      noisy_image_processed.save(noisy_dir + f'/{char}/' + f'{char}_{i}.png')
 
 
 
