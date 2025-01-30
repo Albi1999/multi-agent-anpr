@@ -225,11 +225,11 @@ app.layout = html.Div(
                                       style={"width": "100%", "padding": "10px", "backgroundColor": "#dc3545", "color": "#fff", "border": "none", "borderRadius": "5px", "marginTop": "10px"})
                         ]),
 
-                        html.Button('Threshold Options', id='toggle-threshold-options', n_clicks=0, 
+                        html.Button('Edge Detection Options', id='toggle-threshold-options', n_clicks=0, 
                                   style={"width": "100%", "padding": "10px", "backgroundColor": "#ffc107", "color": "#fff", "border": "none", "borderRadius": "5px", "marginTop": "10px"}),
 
                         html.Div(id='threshold-options', style={"display": "none", "marginTop": "20px"}, children=[
-                            html.Div("Threshold Block Sizet", style={"marginBottom": "10px"}),
+                            html.Div("Threshold Block Size", style={"marginBottom": "10px"}),
                             dcc.Slider(
                                 id='threshold-block-slider',
                                 min=3,
@@ -277,8 +277,8 @@ app.layout = html.Div(
                         html.Button('Invert Colors', id='invert-btn', n_clicks=0, 
                                   style={"width": "100%", "padding": "10px", "backgroundColor": "#dc3545", "color": "#fff", "border": "none", "borderRadius": "5px", "marginTop": "10px"}),
                         
-                        html.Button('Edge Detection', id='edge-btn', n_clicks=0, 
-                                  style={"width": "100%", "padding": "10px", "backgroundColor": "#ffc107", "color": "#fff", "border": "none", "borderRadius": "5px", "marginTop": "10px"}),
+#                        html.Button('Edge Detection', id='edge-btn', n_clicks=0, 
+#                                  style={"width": "100%", "padding": "10px", "backgroundColor": "#ffc107", "color": "#fff", "border": "none", "borderRadius": "5px", "marginTop": "10px"}),
                        
                         html.Button('Undo', id='undo-btn', n_clicks=0, 
                                   style={"width": "48%", "padding": "10px", "backgroundColor": "#6c757d", "color": "#fff", "border": "none", "borderRadius": "5px", "marginTop": "10px", "marginRight": "2%"}),
@@ -313,7 +313,6 @@ app.layout = html.Div(
 )
 
 # Callback for image processing
-# Callback for image processing
 @app.callback(
     [
         Output('image-display', 'children'),
@@ -337,7 +336,7 @@ app.layout = html.Div(
         Input('invert-btn', 'n_clicks'),
         Input('undo-btn', 'n_clicks'),
         Input('redo-btn', 'n_clicks'),
-        Input('edge-btn', 'n_clicks'),
+#        Input('edge-btn', 'n_clicks'),
         Input('toggle-blur-options', 'n_clicks'),
         Input('toggle-exposure-options', 'n_clicks'),
         Input('toggle-contrast-options', 'n_clicks'),
@@ -358,7 +357,7 @@ app.layout = html.Div(
     ]
 )
 def process_image(contents, auto_crop_clicks, blur_clicks, exposure_clicks, contrast_clicks, brightness_clicks, 
-                  threshold_clicks, grayscale_clicks, sharpen_clicks, invert_clicks, undo_clicks, redo_clicks, edge_clicks,
+                  threshold_clicks, grayscale_clicks, sharpen_clicks, invert_clicks, undo_clicks, redo_clicks,
                   toggle_blur_clicks, toggle_exposure_clicks, toggle_contrast_clicks, toggle_brightness_clicks, toggle_threshold_clicks,
                   blur_kernel, blur_style, exposure_value, exposure_style, contrast_value, contrast_style, 
                   brightness_value, brightness_style, threshold_block, threshold_style):
@@ -421,8 +420,8 @@ def process_image(contents, auto_crop_clicks, blur_clicks, exposure_clicks, cont
             processed_image = adjust_contrast(processed_image, contrast_value)
         elif trigger_id == 'brightness-btn':
             processed_image = adjust_brightness(processed_image, brightness_value)
-        elif trigger_id == 'edge-btn':
-            processed_image = improved_edge_detection(processed_image, 50, 200)
+#        elif trigger_id == 'edge-btn':
+#            processed_image = improved_edge_detection(processed_image, 50, 200)
         elif trigger_id == 'grayscale-btn':
             processed_image = cv2.cvtColor(processed_image, cv2.COLOR_BGR2GRAY)
             processed_image = cv2.cvtColor(processed_image, cv2.COLOR_GRAY2BGR)
@@ -434,17 +433,22 @@ def process_image(contents, auto_crop_clicks, blur_clicks, exposure_clicks, cont
         elif trigger_id == 'threshold-btn':
             processed_image = adaptive_thresholding(processed_image, threshold_block, 2)
 
-        # Update history for undo/redo
-        history.append(processed_image.copy())
-        redo_stack.clear()
+        # Save history for undo functionality
+        if len(history) == 0 or not np.array_equal(history[-1], processed_image):
+            history.append(processed_image.copy())
+            redo_stack.clear()
 
-    # Undo and redo functionality
-    if trigger_id == 'undo-btn' and len(history) > 1:
-        redo_stack.append(history.pop())
-        processed_image = history[-1].copy()
-    elif trigger_id == 'redo-btn' and redo_stack:
-        processed_image = redo_stack.pop()
-        history.append(processed_image.copy())
+    # Undo functionality
+    if trigger_id == 'undo-btn':
+        if len(history) > 1:
+            redo_stack.append(history.pop())
+            processed_image = history[-1].copy()
+
+    # Redo functionality
+    if trigger_id == 'redo-btn':
+        if redo_stack:
+            processed_image = redo_stack.pop()
+            history.append(processed_image.copy())
 
     # Convert image for display
     encoded_image = image_to_base64(processed_image, format="png")
