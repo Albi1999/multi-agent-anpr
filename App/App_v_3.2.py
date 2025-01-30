@@ -5,6 +5,9 @@ import numpy as np
 import base64
 from io import BytesIO
 from PIL import Image, ImageEnhance
+import ollama
+import os
+from pathlib import Path
 
 # Initialize the Dash app
 app = dash.Dash(__name__)
@@ -19,10 +22,14 @@ redo_stack = []
 # Helper functions 
 # --------------------------------------------------------------------------------------------------------------------
 
-def image_to_base64(image, format="jpg"):
+def image_to_base64(image, format="jpg", pure_base64=False):
+    """Converts an image to Base64 format. If `pure_base64=True`, removes metadata."""
     _, buffer = cv2.imencode(f'.{format}', image)
     encoded_image = base64.b64encode(buffer).decode()
-    return f'data:image/{format};base64,{encoded_image}'
+    
+    if pure_base64:
+        return encoded_image  # Return raw Base64 for AI
+    return f'data:image/{format};base64,{encoded_image}'  # Return with metadata for web display
 
 # Image processing functions
 def adjust_exposure(image, factor=1.0):
@@ -82,6 +89,114 @@ def improved_edge_detection(image, min_threshold, max_threshold):
     combined = cv2.bitwise_and(gradient_magnitude, adaptive_thresh)
     return cv2.cvtColor(combined, cv2.COLOR_GRAY2BGR)
 
+
+def select_corners(image):
+    """Allows users to manually select four corners of an image."""
+    img = cv2.imread(image)
+    points = []
+
+    def mouse_callback(event, x, y, flags, param):
+        nonlocal points
+        if event == cv2.EVENT_LBUTTONDOWN and len(points) < 4:
+            points.append((x, y))
+            cv2.circle(img, (x, y), 5, (255, 0, 0), -1)
+
+    cv2.namedWindow("Select Corners")
+    cv2.setMouseCallback("Select Corners", mouse_callback)
+
+    while True:
+        cv2.imshow("Select Corners", img)
+        key = cv2.waitKey(1) & 0xFF
+        if key == ord('f') and len(points) == 4:
+            break
+        elif key == 27:  # ESC key to exit
+            return None
+
+    cv2.destroyAllWindows()
+    return np.array(points, dtype=np.float32)
+
+def paint_image(img):
+    """Allows users to draw on an image."""
+    drawing = False
+    last_point = None
+    img_display = img.copy()
+
+    def mouse_callback(event, x, y, flags, param):
+        nonlocal drawing, last_point
+        if event == cv2.EVENT_LBUTTONDOWN:
+            drawing = True
+            last_point = (x, y)
+        elif event == cv2.EVENT_MOUSEMOVE and drawing:
+            cv2.line(img_display, last_point, (x, y), (0, 0, 255), 2)
+            last_point = (x, y)
+        elif event == cv2.EVENT_LBUTTONUP:
+            drawing = False
+
+    cv2.namedWindow("Paint Image")
+    cv2.setMouseCallback("Paint Image", mouse_callback)
+
+    while True:
+        cv2.imshow("Paint Image", img_display)
+        key = cv2.waitKey(1) & 0xFF
+        if key == ord('s'):  # Save
+            return img_display
+        elif key == 27:  # ESC to exit
+            break
+
+    cv2.destroyAllWindows()
+    return img
+
+def adaptive_dataset_generation(folder_path):
+    """Generates adaptive thresholded versions of license plates in a dataset."""
+    path_vers = Path(folder_path)
+    for path in path_vers.iterdir():
+        if path.is_file():
+            image_name = path.name
+            img = cv2.imread(str(path))
+            img = adaptive_thresholding(img)
+            cv2.imwrite(f"thresholded_{image_name}", img)
+
+def character_segmentation(image_path, deviation=10):
+    """Segments individual characters from a license plate."""
+    img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
+    _, thresh = cv2.threshold(img, 150, 255, cv2.THRESH_BINARY_INV)
+
+    contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    character_images = []
+
+    for cnt in contours:
+        x, y, w, h = cv2.boundingRect(cnt)
+        if h > deviation:
+            char_img = img[y:y+h, x:x+w]
+            character_images.append(char_img)
+
+    return character_images
+
+def perspective_correction(img=None, image_path=None):
+    """Applies perspective transformation to correct skewed license plates."""
+    if image_path:
+        img = cv2.imread(image_path)
+
+    src = select_corners(image_path)
+    if src is None:
+        return img
+
+    height, width = img.shape[:2]
+    dst = np.float32([[0, 0], [width-1, 0], [width-1, height-1], [0, height-1]])
+    
+    M = cv2.getPerspectiveTransform(src, dst)
+    corrected_img = cv2.warpPerspective(img, M, (width, height))
+
+    return corrected_img
+
+def on_change(_):
+    """Updates adaptive thresholding interactively."""
+    pass  # Placeholder for trackbar callback
+
+def on_brush_change(_):
+    """Handles brush size adjustments while painting."""
+    pass  # Placeholder for trackbar callback
+
 # Automatic license plate detection and cropping
 def auto_crop_license_plate(image):
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
@@ -140,6 +255,40 @@ def auto_crop_license_plate(image):
 
     return image
 
+def suggest_tool(image_path):
+    """Uses an AI model to suggest the best tool for image enhancement."""
+    encoded_image = encoded_image = image_to_base64(cv2.imread(image_path), pure_base64=True)
+    context = "The image is a car plate photo."
+
+    messages = [
+        {
+            "role": "system",
+            "content": """You are an expert in image processing and have been asked to suggest a tool to improve image readability.
+            You have the following tools at your disposal: Grayscale, Adjust Exposure, Adjust Brilliance, Adjust Contrast, Adjust Sharpness, Edge Detection, Adaptive Thresholding."""
+        },
+        {
+            "role": "user",
+            "content": f"""Based on the image data and the context below, suggest the best tool and its input to improve the image readability.
+            Context: {context}
+            
+            Respond in the format: ToolName(InputValue).
+            """,
+            "images": [encoded_image]
+        }
+    ]
+
+    response = ollama.chat(model="llama3.2-vision", messages=messages)
+    tool_name, tool_input = parse_tool_response(response['message']['content'])
+
+    return f"Suggested Tool: {tool_name}, Input: {tool_input}"
+
+def parse_tool_response(response: str):
+    """Parses the AI response to extract tool name and input value."""
+    if "(" in response and ")" in response:
+        tool_name = response.split("(")[0].strip()
+        tool_input = response.split("(")[1].split(")")[0].strip()
+        return tool_name, tool_input
+    return response, ""
 
 # --------------------------------------------------------------------------------------------------------------------
 # Layout of the app 
@@ -176,9 +325,37 @@ app.layout = html.Div(
                         html.Button('Auto Crop License Plate', id='auto-crop-btn', n_clicks=0, 
                                   style={"width": "100%", "padding": "10px", "backgroundColor": "#28a745", "color": "#fff", "border": "none", "borderRadius": "5px", "marginTop": "10px"}),
 
-                        
+                        html.Button("Suggest Tool (AI)", id="suggest-tool-btn", n_clicks=0, 
+                                    style={"width": "100%", "padding": "10px", "backgroundColor": "#ffcc00", "color": "#1f1f1f", 
+                                        "border": "none", "borderRadius": "5px", "marginTop": "10px"}),
+
+                        html.Div(id="suggested-tool-output", style={"marginTop": "10px", "color": "#ffcc00"}),
+
+                        html.Button("Select Corners", id="select-corners-btn", n_clicks=0, 
+                                    style={"width": "49%", "padding": "10px", "backgroundColor": "#28a745", "color": "#fff", 
+                                        "border": "none", "borderRadius": "5px", "marginTop": "10px", "marginRight": "2%"}),
+
+                        html.Button("Perspective Correction", id="perspective-correction-btn", n_clicks=0, 
+                                    style={"width": "49%", "padding": "10px", "backgroundColor": "#17a2b8", "color": "#fff", 
+                                        "border": "none", "borderRadius": "5px", "marginTop": "10px"}),
+
+                        html.Button("Paint Image", id="paint-image-btn", n_clicks=0, 
+                                    style={"width": "49%", "padding": "10px", "backgroundColor": "#dc3545", "color": "#fff", 
+                                        "border": "none", "borderRadius": "5px", "marginTop": "10px", "marginRight": "2%"}),
+
+                        html.Button("Segment Characters", id="segment-characters-btn", n_clicks=0, 
+                                    style={"width": "49%", "padding": "10px", "backgroundColor": "#ffc107", "color": "#1f1f1f", 
+                                        "border": "none", "borderRadius": "5px", "marginTop": "10px"}),
+
+                        html.Button("Adaptive Dataset Generation", id="adaptive-dataset-btn", n_clicks=0, 
+                                    style={"width": "100%", "padding": "10px", "backgroundColor": "#007bff", "color": "#fff", 
+                                        "border": "none", "borderRadius": "5px", "marginTop": "10px"}),
+
+                        dcc.Store(id="stored-image-path"),  # Store image path for processing
+
+
                         html.Button('Exposure Options', id='toggle-exposure-options', n_clicks=0, 
-                                  style={"width": "100%", "padding": "10px", "backgroundColor": "#ff8700", "color": "#fff", "border": "none", "borderRadius": "5px", "marginTop": "10px"}),
+                                  style={"width": "100%", "padding": "10px", "backgroundColor": "#ff8700", "color": "#fff", "border": "none", "borderRadius": "5px", "marginTop": "20px"}),
 
                         html.Div(id='exposure-options', style={"display": "none", "marginTop": "20px"}, children=[
                             html.Div("Exposure Adjustment", style={"marginBottom": "10px"}),
@@ -277,19 +454,19 @@ app.layout = html.Div(
 #                                  style={"width": "100%", "padding": "10px", "backgroundColor": "#ffc107", "color": "#fff", "border": "none", "borderRadius": "5px", "marginTop": "10px"}),
 
                         html.Button('Grayscale', id='grayscale-btn', n_clicks=0, 
-                                  style={"width": "100%", "padding": "10px", "backgroundColor": "#6c757d", "color": "#fff", "border": "none", "borderRadius": "5px", "marginTop": "10px"}),
+                                  style={"width": "32%", "padding": "10px", "backgroundColor": "#6c757d", "color": "#fff", "border": "none", "borderRadius": "5px", "marginTop": "20px", "marginRight": "2%"}),
                         html.Button('Sharpen', id='sharpen-btn', n_clicks=0, 
-                                  style={"width": "100%", "padding": "10px", "backgroundColor": "#007bff", "color": "#fff", "border": "none", "borderRadius": "5px", "marginTop": "10px"}),
+                                  style={"width": "32%", "padding": "10px", "backgroundColor": "#007bff", "color": "#fff", "border": "none", "borderRadius": "5px", "marginTop": "10px", "marginRight": "2%"}),
                         html.Button('Invert Colors', id='invert-btn', n_clicks=0, 
-                                  style={"width": "100%", "padding": "10px", "backgroundColor": "#dc3545", "color": "#fff", "border": "none", "borderRadius": "5px", "marginTop": "10px"}),
+                                  style={"width": "32%", "padding": "10px", "backgroundColor": "#dc3545", "color": "#fff", "border": "none", "borderRadius": "5px", "marginTop": "10px"}),
                         
 #                        html.Button('Edge Detection', id='edge-btn', n_clicks=0, 
 #                                  style={"width": "100%", "padding": "10px", "backgroundColor": "#ffc107", "color": "#fff", "border": "none", "borderRadius": "5px", "marginTop": "10px"}),
                        
                         html.Button('Undo', id='undo-btn', n_clicks=0, 
-                                  style={"width": "48%", "padding": "10px", "backgroundColor": "#6c757d", "color": "#fff", "border": "none", "borderRadius": "5px", "marginTop": "10px", "marginRight": "2%"}),
+                                  style={"width": "49%", "padding": "10px", "backgroundColor": "#6c757d", "color": "#fff", "border": "none", "borderRadius": "5px", "marginTop": "10px", "marginRight": "2%"}),
                         html.Button('Redo', id='redo-btn', n_clicks=0, 
-                                  style={"width": "48%", "padding": "10px", "backgroundColor": "#ffc107", "color": "#fff", "border": "none", "borderRadius": "5px", "marginTop": "10px"}),
+                                  style={"width": "49%", "padding": "10px", "backgroundColor": "#ffc107", "color": "#fff", "border": "none", "borderRadius": "5px", "marginTop": "10px"}),
 
                         html.A(
                             "Download Processed Image", id="download-link", download="processed_image.png", 
@@ -473,6 +650,116 @@ def process_image(contents, auto_crop_clicks, blur_clicks, exposure_clicks, cont
         blur_style, exposure_style, contrast_style, brightness_style, threshold_style,
         download_href
     )
+
+# Callback for AI-based tool suggestion
+@app.callback(
+    Output("suggested-tool-output", "children"),
+    Input("suggest-tool-btn", "n_clicks"),
+    State("stored-image-path", "data"),
+    prevent_initial_call=True
+)
+def suggest_tool_callback(n_clicks, image_path):
+    """Suggest an image enhancement tool using AI."""
+    if not image_path:
+        return "No image uploaded."
+    
+    suggestion = suggest_tool(image_path)
+    return f"Suggested: {suggestion}"
+
+# Callback for selecting corners manually
+@app.callback(
+    Output("stored-image-path", "data"),
+    Input("select-corners-btn", "n_clicks"),
+    State("stored-image-path", "data"),
+    prevent_initial_call=True
+)
+def select_corners_callback(n_clicks, image_path):
+    """Allows users to select four corners manually."""
+    if not image_path:
+        return dash.no_update
+
+    select_corners(image_path)  # Modify image in-place
+    return image_path  
+
+# Callback for perspective correction
+@app.callback(
+    Output("image-display", "children"),
+    Input("perspective-correction-btn", "n_clicks"),
+    State("stored-image-path", "data"),
+    prevent_initial_call=True
+)
+def perspective_correction_callback(n_clicks, image_path):
+    """Perform perspective correction on the image."""
+    if not image_path:
+        return dash.no_update
+
+    corrected_image = perspective_correction(image_path=image_path)
+    processed_path = "processed/corrected.png"
+
+    os.makedirs("processed", exist_ok=True)
+    cv2.imwrite(processed_path, corrected_image)
+
+    encoded_image = image_to_base64(corrected_image, format="png")
+    return html.Img(src=encoded_image, style={"width": "90%", "borderRadius": "10px"})
+
+# Callback for painting on image
+@app.callback(
+    Output("stored-image-path", "data"),
+    Input("paint-image-btn", "n_clicks"),
+    State("stored-image-path", "data"),
+    prevent_initial_call=True
+)
+def paint_image_callback(n_clicks, image_path):
+    """Allow users to draw manually on an image."""
+    if not image_path:
+        return dash.no_update
+    
+    img = cv2.imread(image_path)
+    painted_image = paint_image(img)
+    
+    painted_path = "processed/painted.png"
+    os.makedirs("processed", exist_ok=True)
+    cv2.imwrite(painted_path, painted_image)
+    
+    return painted_path
+
+# Callback for character segmentation
+@app.callback(
+    Output("stored-image-path", "data"),
+    Input("segment-characters-btn", "n_clicks"),
+    State("stored-image-path", "data"),
+    prevent_initial_call=True
+)
+def character_segmentation_callback(n_clicks, image_path):
+    """Perform character segmentation on the license plate."""
+    if not image_path:
+        return dash.no_update
+    
+    characters = character_segmentation(image_path)
+    segmented_dir = "processed/characters/"
+    
+    os.makedirs(segmented_dir, exist_ok=True)
+    for i, char_img in enumerate(characters):
+        cv2.imwrite(f"{segmented_dir}/char_{i}.png", char_img)
+    
+    return image_path  
+
+# Callback for adaptive dataset generation
+@app.callback(
+    Output("stored-image-path", "data"),
+    Input("adaptive-dataset-btn", "n_clicks"),
+    State("stored-image-path", "data"),
+    prevent_initial_call=True
+)
+def adaptive_dataset_callback(n_clicks, image_path):
+    """Generate thresholded dataset versions."""
+    if not image_path:
+        return dash.no_update
+    
+    folder_path = os.path.dirname(image_path)
+    adaptive_dataset_generation(folder_path)
+    
+    return image_path  
 
 
 # --------------------------------------------------------------------------------------------------------------------
