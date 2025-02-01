@@ -1,6 +1,3 @@
-#also create characters where some parts of the character are missing , like top part of a N or something like that for training (more robustness)
-
-
 # !!! imgaug must be downloaded from this fork : https://github.com/marcown/imgaug
 
 from PIL import Image, ImageFont, ImageDraw
@@ -9,10 +6,11 @@ import imgaug.augmenters as iaa
 import os 
 import cv2
 import string
+import random 
 
 
 # image_size should be the same as the size of the characters we segment from the actual license plates BEFORE resizing them to 28x28 ! Such that
-# we do the same transformations !!!
+# we do the same transformations
 # TODO : maybe do some changes here, img_size 90,140 is not always diretly the one to use but its around the right area (atleast from when I segmented the characters BEFORE
 # resizing them to 28x28, they had about this size 
 # TODO : I didn't manage for the letters/numbers to fill out the complete 90,140 , like it should be the case 
@@ -96,10 +94,6 @@ def generate_single_character(char, font_path, image_size=(100, 150)):
     return image
 
 
-
-
-
-
 def create_clean_variations(clean_image):
     """Create slightly varied but still clean versions of the input image
     
@@ -139,8 +133,6 @@ def create_clean_variations(clean_image):
     return Image.fromarray(clean_variation)
 
 
-
-# TODO : remove some/add some, make pictures not that fucked up !!!
 def create_augmented_pair(clean_image):
     """Create a noisy version of the input image that simulates real-world license plate conditions
     
@@ -203,8 +195,6 @@ def create_augmented_pair(clean_image):
     return Image.fromarray(noisy_image)
 
 
-
-
 def create_augmented_pair_edge_roughness(clean_image):
     """Create noisy versions based on edge roughness"""
 
@@ -228,20 +218,14 @@ def create_augmented_pair_edge_roughness(clean_image):
     # But then draw in the smaller contours in black again
     for idx, contours in enumerate(contour_areas):
         if idx == 0: # biggest area
-            cv2.drawContours(image, [contours[0] + np.random.randint(-2, 2, contours[0].shape)], -1, 255, -1)
+            cv2.drawContours(image, [contours[0] + np.random.randint(-7, 7, contours[0].shape)], -1, 255, -1)
         else: # smaller areas
-            cv2.drawContours(image, [contours[0] + np.random.randint(-2,2, contours[0].shape)], -1, 0, -1)
+            cv2.drawContours(image, [contours[0] + np.random.randint(-7,7, contours[0].shape)], -1, 0, -1)
       
-
-    cv2.imshow('edge_roughness', image)
-    cv2.waitKey(0)
-    cv2.destroyAllWindows()
-    exit()
 
     # Invert again (bc with current logic, preprocessing expects white background and black object)
     image = cv2.bitwise_not(image)
     
-
 
     return Image.fromarray(image)
 
@@ -258,20 +242,12 @@ def create_augmented_pair_thickness(clean_image, area = (5,8)):
     kernel = np.ones((kernel_size, kernel_size), np.uint8)
     if random.random() > 0.5:
         image = cv2.erode(image,kernel)
-        cv2.imshow('erode', image)
-        cv2.waitKey(0)
-        cv2.destroyAllWindows()
        
         return image
     
     image = cv2.dilate(image, kernel)
-    cv2.imshow('dilate', image)
-    cv2.waitKey(0)
-    cv2.destroyAllWindows()
   
     return image
-
-
 
 
 def create_augmented_pair_perspective_skew(clean_image):
@@ -285,27 +261,15 @@ def create_augmented_pair_perspective_skew(clean_image):
     # Perspective variations
     augmenter = iaa.PerspectiveTransform(scale=(0.05, 0.2), keep_size=True, fit_output=True)
 
-
     image = augmenter(image=image)
 
     # Invert again for preprocessing logic later on
     image = cv2.bitwise_not(image)
 
 
-    cv2.imshow('perspective_correction', image)
-    cv2.waitKey(0)
-    cv2.destroyAllWindows()
-   # exit()
-
-
-    # TODO : or just instead of that, we can add that characters are pushed more together bc I think that is what happens when we correct the perspective ;
-    # so make characters appear more tight together, for a P/A etc holes more small etc. 
-
-
     return Image.fromarray(image)
 
     
-
 def create_augmented_pair_imagequality(clean_image):
     """Create noisy versions based on image quality"""
 
@@ -316,43 +280,9 @@ def create_augmented_pair_imagequality(clean_image):
     # Image quality
     augmenter = iaa.JpegCompression(compression=(70, 90)) 
 
-
     image = augmenter(image=image)
 
-    cv2.imshow('image_quality', image)
-    cv2.waitKey(0)
-    cv2.destroyAllWindows()
-    exit()
-
     return Image.fromarray(image)
-
-
-def create_augemented_pair_character_degradation(clean_image):
-    # TODO : never this extreme in images, but maybe helps a bit ?
-    """Create noisy versions based on character degradation"""
-    
-    image = np.array(clean_image)
-
-    # Sets pixels in image to zero per chance, i.e. the character must be white and the background black
-    image = cv2.bitwise_not(image)
-
-    augmenter = iaa.Dropout(p=(0.02,0.05))
-
-    image = augmenter(image=image)
-
-    # Invert again for preprocessing logic later on
-    image = cv2.bitwise_not(image)
-
-    cv2.imshow('character_degradation', image)
-    cv2.waitKey(0)
-    cv2.destroyAllWindows()
-    exit()
-
-    return Image.fromarray(image)
-
-
-
-
 
 
 def get_edge_segment(canny_image, start_point, segment_length=5):
@@ -438,7 +368,7 @@ def remove_pixels_segment(image, edge_segment, length_max = 30):
     return result
 
 
-def create_augmented_pair_occlusion(clean_image, n_segments = 10):
+def create_augmented_pair_occlusion(clean_image, n_segments = 10, segment_length = 10, length_max = 175):
     """Create noisy versions based on occlusion"""
     # Which pixels ? --> we don't want to remove the ones "inside" of the character,
     # but rather work around the edges and remove parts there, at some areas more than others
@@ -474,9 +404,9 @@ def create_augmented_pair_occlusion(clean_image, n_segments = 10):
             if start_point not in used_segments:
                 cond = False 
 
-        edge_segment = get_edge_segment(canny, start_point, segment_length=5)
+        edge_segment = get_edge_segment(canny, start_point, segment_length=segment_length)
 
-        image = remove_pixels_segment(image, edge_segment, length_max=30)
+        image = remove_pixels_segment(image, edge_segment, length_max=length_max)
 
 
 
@@ -488,21 +418,59 @@ def create_augmented_pair_occlusion(clean_image, n_segments = 10):
     result_image = cv2.bitwise_not(image)
 
 
-    cv2.imshow("img", result_image)
-    cv2.waitKey(0)
-    cv2.destroyAllWindows()
-  #  exit()
-
     return Image.fromarray(result_image)
 
 
- 
+def create_augmented_pair_hole_filling(clean_image):
+    # Note that this doesn't work on all characters, because not all holes are completely "closed"
+
+    # TODO : fix the bitwise_not madness
+    image = np.array(clean_image)
+    # For dialation & erosion operations : we need black background and white characters
+    image = cv2.bitwise_not(image)
+
+    # First, dilate the image (this is in order to close some of the holes, such that the flooding function will work better and on more characters)
+    kernel_dil = np.ones((8,8), np.uint8)  # Adjust kernel size to control how much to dilate
+    dilated = cv2.dilate(image, kernel_dil, iterations=1)  # Adjust iterations for more/less dilation
+    image = dilated
+    image = cv2.bitwise_not(image)
+    height, width = image.shape
+    mask = np.zeros((height + 2, width + 2), np.uint8)
+    
+    # Clone the image for flood filling
+    fill_img = image.copy()
+    
+    # Flood fill from point (0,0)
+    cv2.floodFill(fill_img, mask, (0,0), 0)
+    
+    # Invert to get holes
+    holes = cv2.bitwise_not(fill_img)
+
+    # Note that the holes are now in black, so we need to invert the image again, since erosion works on white characters
+    holes = cv2.bitwise_not(holes)
+    
+    kernel_eros = np.ones((11,11), np.uint8)  # Adjust kernel size to control how much to erode
+    eroded_holes = cv2.erode(holes, kernel_eros, iterations=1)  # Adjust iterations for more/less erosion
+
+    # Note that we want to close the holes, therefore we need to get the pixel difference between the holes and the eroded holes
+    # because that will be the "outer" part that we want to keep
+    diff = cv2.absdiff(holes, eroded_holes)
+
+   # exit()
+    # Combine with original image
+    # First, invert again 
+    eroded_hole_final = cv2.bitwise_not(diff)
+    filled = cv2.bitwise_and(image, eroded_hole_final)
+
+    # Finally, erode the image to try to get more back to normal; use the same kernel as in dilation
+    filled = cv2.bitwise_not(filled)
+    eroded = cv2.erode(filled, kernel_dil, iterations=1)
+    eroded = cv2.bitwise_not(eroded)
+
+    return Image.fromarray(eroded)
 
 
-
-
-
-def create_augmented_pair_smushing(clean_image, factor=0.3, fill_holes=True):
+def create_augmented_pair_smushing(clean_image, factor=0.3):
     # For stretching : factor > 1, for smushing : factor < 1    
     image = np.array(clean_image)
     height, width = image.shape
@@ -512,41 +480,8 @@ def create_augmented_pair_smushing(clean_image, factor=0.3, fill_holes=True):
     compressed_img = cv2.resize(image, (compressed_width, height), 
                               interpolation=cv2.INTER_LINEAR)
 
-    if fill_holes:
-        height, width = compressed_img.shape
-        mask = np.zeros((height + 2, width + 2), np.uint8)
-        
-        # Clone the image for flood filling
-        fill_img = compressed_img.copy()
-        
-        # Flood fill from point (0,0)
-        cv2.floodFill(fill_img, mask, (0,0), 0)
-        
-        # Invert to get holes
-        holes = cv2.bitwise_not(fill_img)
-            
-
-   
-        # TODO : make such that holes are not filled completely
-        
-        # Combine with original image
-        filled = cv2.bitwise_and(compressed_img, holes)
-
-        cv2.imshow('smushing', filled)
-        cv2.waitKey(0)
-        cv2.destroyAllWindows()
-      
-        
-        return Image.fromarray(filled)
-    
-
-    cv2.imshow('compressed', compressed_img)
-    cv2.waitKey(0)
-    cv2.destroyAllWindows()
-    exit()
 
     return Image.fromarray(compressed_img)
-
 
 
 def create_augmented_pair_rotation(clean_image):
@@ -559,24 +494,12 @@ def create_augmented_pair_rotation(clean_image):
 
     augmenter = iaa.Rotate((-5, 5))
 
-    
-   
-
-
     image = augmenter(image=image)
 
     # Invert again 
     image = cv2.bitwise_not(image)
 
-
-    cv2.imshow('rotation', image)
-    cv2.waitKey(0)
-    cv2.destroyAllWindows()
-    exit()
-
     return Image.fromarray(image)
-
-
 
 
 def create_augmented_pair_blur(clean_image):
@@ -597,16 +520,124 @@ def create_augmented_pair_blur(clean_image):
 
     image = augmenter(image=image)
 
-    cv2.imshow('blur', image)
-    cv2.waitKey(0)
-    cv2.destroyAllWindows()
-    exit()
+    return Image.fromarray(image)
+
+
+def create_augmented_pair_elastic_deform(clean_image, alpha=30, sigma=5):
+    """Simulate wrinkled/bent plates"""
+    # In general : take alpha like 30- ? (50 until now tested) and sigma between 1-10 
+    image = np.array(clean_image)
+
+    image = cv2.bitwise_not(image)
+    
+    augmenter = iaa.ElasticTransformation(alpha=alpha, sigma=sigma)
+
+    image = augmenter(image=image)
+
+
+    image = cv2.bitwise_not(image)
+    
 
     return Image.fromarray(image)
 
 
+def augmentation_pipeline(clean_image,char, i):
+    """
+    Applies a series of augmentations to an image according to specific rules:
+    1. First applies 0-3 augmentations from the initial set randomly
+    2. Then applies either a single augmentation or one of the predefined combinations
+    
+    Args:
+        clean_image: Input image to be augmented
+        
+    Returns:
+        Augmented image after pipeline processing
+    """
+    # Initial augmentation options
+    initial_augmentations = [
+        'create_augmented_pair_imagequality',
+        'create_augmented_pair_rotation',
+        'create_augmented_pair_blur'
+    ]
+    
+    # Predefined combinations for second stage
+    combination_options = [
+        ['create_augmented_pair_smushing', 'create_augmented_pair_hole_filling'],
+        ['create_augmented_pair_perspective_skew', 'create_augmented_pair_thickness'],
+        ['create_augmented_pair_smushing', 'create_augmented_pair_occlusion'],
+        ['create_augmented_pair_elastic_deform', 'create_augmented_pair_occlusion']
+    ]
+    
+    # Additional single augmentation options for second stage
+    single_options = [
+        'create_augmented_pair_smushing',
+        'create_augmented_pair_hole_filling',
+        'create_augmented_pair_perspective_skew',
+        'create_augmented_pair_thickness',
+        'create_augmented_pair_elastic_deform',
+        'create_augmented_pair_occlusion'
+    ]
+    
+    # Initialize the image variable
+    augmented_image = clean_image
+
+    applications = str.upper(char) + "_" + str(i) + ".png : "
+  #  print("STARTED")
+    
+    in_starter = False
+    in_second_stage = False
+    in_solo = False
+    # Stage 1: Apply 0-3 initial augmentations randomly
+    num_initial_augs = random.randint(0, 3)
+    if num_initial_augs > 0:
+        selected_initial = random.sample(initial_augmentations, num_initial_augs)
+    #    print(f"Selected initial augmentations: {selected_initial}")
+        for aug_func_name in selected_initial:
+            # Get the function from globals and apply it
+            aug_func = globals()[aug_func_name]
+            augmented_image = aug_func(augmented_image)
+            applications += aug_func_name + " "
+            if aug_func_name == 'create_augmented_pair_elastic_deform':
+                in_starter = True
+    
+    # Stage 2: Decide whether to apply a single augmentation or a combination
+    apply_second_stage = True
+
+    if apply_second_stage:
+        # Decide between single augmentation or combination (50-50 chance)
+        if random.random() < 0.5:
+            # Apply single augmentation
+            selected_aug = random.choice(single_options)
+            aug_func = globals()[selected_aug]
+            augmented_image = aug_func(augmented_image)
+     #       print(f"Applied single augmentation: {selected_aug}")
+            applications += selected_aug + " "
+            if aug_func == 'create_augmented_pair_elastic_deform':
+                in_solo = True
+        else:
+            # Apply combination
+            selected_combo = random.choice(combination_options)
+            for aug_func_name in selected_combo:
+                aug_func = globals()[aug_func_name]
+                augmented_image = aug_func(augmented_image)
+                applications += aug_func_name + " "
+      #      print(f"Applied combination: {selected_combo}")
+            if 'create_augmented_pair_elastic_deform' in selected_combo:
+                in_second_stage = True
+    
+    # Finally, apply elastic deformation with high probability if not already applied
+    if not in_starter and not in_second_stage and not in_solo:
+        if random.random() < 0.8:
+            augmented_image = create_augmented_pair_elastic_deform(augmented_image, alpha=50, sigma=5)
+            applications += "create_augmented_pair_elastic_deform"
+  
+
+        
+  #  print("ENDED")
 
 
+
+    return augmented_image, applications
 
 
 def create_directories(output_dir):
@@ -623,10 +654,8 @@ def preprocessing(image):
 
     image = np.array(image)
 
-
     # invert colors
     image = cv2.bitwise_not(image)
-
 
     # New logic : 
     # 1. We know that the character is white and the background is black, i.e. pixel values are 0 for the background and >0 for the character
@@ -636,13 +665,21 @@ def preprocessing(image):
     # Then do the normal resizing steps
 
     # Find all white pixels
+
     white_pixels = np.where(image > 0)
 
+
+
+
     # Get the bounds
-    min_y = np.min(white_pixels[0])  # top
-    max_y = np.max(white_pixels[0])  # bottom
-    min_x = np.min(white_pixels[1])  # left
-    max_x = np.max(white_pixels[1])  # right
+    try:
+        min_y = np.min(white_pixels[0])  # top
+        max_y = np.max(white_pixels[0])  # bottom
+        min_x = np.min(white_pixels[1])  # left
+        max_x = np.max(white_pixels[1])  # right
+    except ValueError as e:
+        print('Error finding bounding box ; skipping this image :', e)
+        return None
 
 
     reg_of_interest = image[min_y:max_y, min_x:max_x] 
@@ -651,7 +688,12 @@ def preprocessing(image):
     h, w = reg_of_interest.shape
 
     # Calculate scaling factor to fit in 20x20 box while maintaining aspect ratio
-    scale = min(20.0/w, 20.0/h)
+    try:
+        scale = min(20.0/w, 20.0/h)
+    except ZeroDivisionError as e:
+        print('Error scaling the image ; skipping this image :', e)
+        return None
+    
     new_w = int(w * scale)
     new_h = int(h * scale)
     
@@ -676,6 +718,7 @@ def preprocessing(image):
    # cv2.imshow('correct_img', correct_img)
    # cv2.waitKey(0)
    # cv2.destroyAllWindows()
+    
   
 
     return Image.fromarray(correct_img)
@@ -745,35 +788,6 @@ def preprocessing(image):
     return Image.fromarray(correct_img)
     '''
 
-import random 
-def generate_dataset_tester(output_dir, font_path):
-    """Used to test the single augmentation methods"""
-    # Define character set (German license plates)
-    chars = list('ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789')
-
-    clean_dir = output_dir + '/clean'
-    noisy_dir = output_dir + '/noisy'
-    
-    # Generate multiple versions of each character
-    for char in chars:
-
-        clean_image = generate_single_character(char, font_path)
-
-
-        for i in range(1):  
-
-            noisy_image_processed = None 
-            while noisy_image_processed == None: 
-                # Generate corresponding noisy image
-                noisy_image = create_augmented_pair_smushing(clean_image, fill_holes=True)
-                noisy_image_processed = 1
-                # Preprocess image
-            #    noisy_image_processed = preprocessing(noisy_image)
-            
-      #      noisy_image_processed.save(noisy_dir + f'/{char}/' + f'{char}_{i}.png')
-
-
-
 
 def generate_dataset(output_dir, font_path):
     """Generate dataset of clean and noisy character images"""
@@ -782,6 +796,14 @@ def generate_dataset(output_dir, font_path):
 
     clean_dir = output_dir + '/clean'
     noisy_dir = output_dir + '/noisy'
+
+    # First, clear text file if it exists
+    if os.path.exists(noisy_dir + '/applications.txt'):
+        os.remove(noisy_dir + '/applications.txt')
+
+    # Create textfile to save applications
+    with open(noisy_dir + '/applications.txt', 'w') as f:
+        f.write('Applications:\n')
     
     # Generate multiple versions of each character
     for char in chars:
@@ -799,31 +821,16 @@ def generate_dataset(output_dir, font_path):
             clean_variation_processed = preprocessing(clean_variation)
             # Save images
             clean_variation_processed.save(clean_dir + f'/{char}/' + f'{char}_{i}.png')
-
-            # None logic needed bc sometimes the preprocessing function doesn't find any contours or gets some error ; in that case
-            # we just retry until we get no errors anymore 
-            noisy_image_processed = None 
-            while noisy_image_processed == None: 
-                # Generate corresponding noisy image
-                noisy_image = create_augmented_pair(clean_image)
-                # Preprocess image
+            # Generate corresponding noisy image
+            
+            # Preprocess image
+            noisy_image_processed = None
+            while noisy_image_processed == None:
+                noisy_image, application = augmentation_pipeline(clean_image, char, i)
                 noisy_image_processed = preprocessing(noisy_image)
-                # Additionally, we will do some checks to make sure our images are not too noisy!
-                # We saw both : images that basically are just a straight line for E, making it impossible to recognize it and
-                # images that have like just a white square in the middle, which is also not helpful
-                # Therefore, we try to remove these
-                clean_image_np = np.array(clean_image_processed)
-                noisy_image_np = np.array(noisy_image_processed)
-                black_pixels_clean = np.sum(clean_image_np == 0) # 0,1,2,3,4,5,6...
-                black_pixels_noisy = np.sum(noisy_image_np == 0)
-                ratio = black_pixels_noisy/black_pixels_clean
-
-                if ratio < 0.8 or ratio > 1.1: # hardcoded for now, also still some problematic images can get through
-                    noisy_image_processed = None 
-                    print(f'Image {char}_{i} too noisy, retrying...')
-
-                # TODO : create a classification NN that classifies whether an image is too mucb noise (so trained on clean images & noisy images binary classification (i.e. sigmoid threshold))
-                # such that NN is called here every time and helps us in not having too noisy training examples later 
+                # Save applications
+                with open(noisy_dir + '/applications.txt', 'a') as f:
+                    f.write(application + '\n')
 
 
 
@@ -835,9 +842,8 @@ def generate_dataset(output_dir, font_path):
 
 
 
+generate_dataset('VCS_Project/data/synthetic/german_font','VCS_Project/fonts/FE-FONT.TTF')
 
-#generate_dataset('data/synthetic/german_font','fonts/FE-FONT.TTF')
-generate_dataset_tester('VCS_Project/data/synthetic/german_font','VCS_Project/fonts/FE-FONT.TTF')
 
 
 
