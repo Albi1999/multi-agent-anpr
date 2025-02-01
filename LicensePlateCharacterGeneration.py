@@ -7,6 +7,9 @@ import os
 import cv2
 import string
 import random 
+import itertools
+from pathlib import Path
+
 
 
 # image_size should be the same as the size of the characters we segment from the actual license plates BEFORE resizing them to 28x28 ! Such that
@@ -94,109 +97,10 @@ def generate_single_character(char, font_path, image_size=(100, 150)):
     return image
 
 
-def create_clean_variations(clean_image):
-    """Create slightly varied but still clean versions of the input image
-    
-    Args:
-        clean_image: PIL Image or np.array of the clean character
-        
-    Returns:
-        PIL Image of the slightly augmented version
-    """
-    # Convert to numpy array if not already
-    image = np.array(clean_image, dtype=np.uint8)
-    
-    # Define very mild augmentation pipeline
-    augmenter = iaa.Sequential([
-        # Slight perspective changes
-        iaa.Sometimes(0.5, iaa.PerspectiveTransform(scale=(0.01, 0.02))),
-        
-        # Minimal rotation
-        iaa.Sometimes(0.5, iaa.Rotate((-2, 2))),
-        
-        # Very slight scaling
-        iaa.Sometimes(0.5, iaa.Affine(
-            scale=(0.95, 1.05),
-            translate_percent={"x": (-0.02, 0.02), "y": (-0.02, 0.02)}
-        )),
-        
-        # Subtle thickness variations using elastic transformation
-        iaa.Sometimes(0.3, iaa.ElasticTransformation(alpha=(0.1, 0.5), sigma=(0.05, 0.1))),
-        
-        # Very mild brightness adjustment
-        iaa.Sometimes(0.3, iaa.Add((-10, 10)))
-    ])
-
-    # Apply augmentation
-    clean_variation = augmenter(image=image)
-    
-    return Image.fromarray(clean_variation)
-
-
-def create_augmented_pair(clean_image):
-    """Create a noisy version of the input image that simulates real-world license plate conditions
-    
-    Args:
-        clean_image: PIL Image or np.array of the clean image
-        
-    Returns:
-        PIL Image of the augmented version
-    """
-    # Convert to numpy array if not already
-    image = np.array(clean_image)
-
-    
-    # Define augmentation pipeline
-    augmenter = iaa.Sequential([
-        # Camera and motion effects
-        iaa.Sometimes(0.8, iaa.OneOf([
-            # Motion blur for vehicle movement
-            iaa.MotionBlur(k=(7, 15), angle=(-45, 45)),
-            # Camera shake and focus issues
-            iaa.GaussianBlur(sigma=(0.5, 3.0)),
-            # Defocus blur
-            iaa.AverageBlur(k=(2, 5))
-        ])),
-        
-        # Perspective and distance variations
-        iaa.Sometimes(0.7, iaa.Sequential([
-            # More aggressive perspective changes
-            iaa.PerspectiveTransform(scale=(0.05, 0.15)),
-            # Slight rotations
-          #  iaa.Rotate((-5, 5)),
-            # Distance variations
-            iaa.Affine(scale=(0.8, 1.2)) # TODO : fix 
-        ])),
-        
-        
-        # Image quality and noise
-        iaa.Sometimes(0.7, iaa.OneOf([
-            # Camera sensor noise
-            iaa.AdditiveGaussianNoise(scale=(0, 0.15 * 255)),
-            # Compression artifacts
-            iaa.JpegCompression(compression=(70, 90)),
-        ])),
-        
-        # Character degradation and occlusion
-        iaa.Sometimes(0.6, iaa.OneOf([
-            # Small occlusions
-            iaa.Dropout(p=(0.01, 0.1)),
-            # Larger occlusions
-            iaa.CoarseDropout(p=(0.02, 0.15), size_percent=(0.02, 0.05))
-        ])),
-        
-
-           
-    ])
-    
-    # Apply augmentation
-    noisy_image = augmenter(image=image)
-    
-    return Image.fromarray(noisy_image)
-
-
-def create_augmented_pair_edge_roughness(clean_image):
+def create_augmented_pair_edge_roughness(clean_image, strength_roughness_choice = (6,7,8,9,10,11)):
     """Create noisy versions based on edge roughness"""
+
+    strength_roughness = random.choice(strength_roughness_choice)
 
     # TODO : Preprocessing with contour finding doesn't work if image is too fizzy (i.e. right now values -2 and 2, already doesn't work)
     image = np.array(clean_image)
@@ -218,9 +122,9 @@ def create_augmented_pair_edge_roughness(clean_image):
     # But then draw in the smaller contours in black again
     for idx, contours in enumerate(contour_areas):
         if idx == 0: # biggest area
-            cv2.drawContours(image, [contours[0] + np.random.randint(-7, 7, contours[0].shape)], -1, 255, -1)
+            cv2.drawContours(image, [contours[0] + np.random.randint(-strength_roughness, strength_roughness, contours[0].shape)], -1, 255, -1)
         else: # smaller areas
-            cv2.drawContours(image, [contours[0] + np.random.randint(-7,7, contours[0].shape)], -1, 0, -1)
+            cv2.drawContours(image, [contours[0] + np.random.randint(-strength_roughness,strength_roughness, contours[0].shape)], -1, 0, -1)
       
 
     # Invert again (bc with current logic, preprocessing expects white background and black object)
@@ -238,19 +142,28 @@ def create_augmented_pair_thickness(clean_image, area = (5,8)):
 
     image = np.array(clean_image)
 
+    # Since dilation & erosion work for white characters on black background
+    image = cv2.bitwise_not(image)
+
     kernel_size = random.randint(area[0], area[1])
+
+    # For the erosion, we don't want to do too much, because most of the characters found in license plates are rather thick
+    kernel_erode = np.ones((2,2), np.uint8)
+    
     kernel = np.ones((kernel_size, kernel_size), np.uint8)
-    if random.random() > 0.5:
-        image = cv2.erode(image,kernel)
+  #  if random.random() > 0.5:
+  #      image = cv2.erode(image,kernel_erode)
        
-        return image
+  #      return image
     
     image = cv2.dilate(image, kernel)
+
+    image = cv2.bitwise_not(image)
   
     return image
 
 
-def create_augmented_pair_perspective_skew(clean_image):
+def create_augmented_pair_perspective_skew(clean_image, scale=(0.05, 0.2)):
 
     image = np.array(clean_image)
 
@@ -259,7 +172,7 @@ def create_augmented_pair_perspective_skew(clean_image):
     image = cv2.bitwise_not(image)
 
     # Perspective variations
-    augmenter = iaa.PerspectiveTransform(scale=(0.05, 0.2), keep_size=True, fit_output=True)
+    augmenter = iaa.PerspectiveTransform(scale=scale, keep_size=True, fit_output=True)
 
     image = augmenter(image=image)
 
@@ -270,7 +183,7 @@ def create_augmented_pair_perspective_skew(clean_image):
     return Image.fromarray(image)
 
     
-def create_augmented_pair_imagequality(clean_image):
+def create_augmented_pair_imagequality(clean_image, compression_strength = (70, 90)):
     """Create noisy versions based on image quality"""
 
     image = np.array(clean_image)
@@ -278,7 +191,7 @@ def create_augmented_pair_imagequality(clean_image):
     # I took out gaussian noise, bc in the real license plate image, with adaptive thresholding we can remove noise or then with the painting tool,
     # thus we will not have like noisy dots around the image anyway
     # Image quality
-    augmenter = iaa.JpegCompression(compression=(70, 90)) 
+    augmenter = iaa.JpegCompression(compression= compression_strength) 
 
     image = augmenter(image=image)
 
@@ -368,11 +281,15 @@ def remove_pixels_segment(image, edge_segment, length_max = 30):
     return result
 
 
-def create_augmented_pair_occlusion(clean_image, n_segments = 10, segment_length = 10, length_max = 175):
+def create_augmented_pair_occlusion(clean_image, n_segments_choice = (7,8,9,10,11,12), segment_length_choice = (7,8,9,10,11,12), length_max_choice = tuple(np.arange(150, 200, 1))):
     """Create noisy versions based on occlusion"""
     # Which pixels ? --> we don't want to remove the ones "inside" of the character,
     # but rather work around the edges and remove parts there, at some areas more than others
     # Therefore, usy Canny Edge Detector first, and around these edges, we do some erosion 
+
+    n_segments = random.choice(n_segments_choice)
+    segment_length = random.choice(segment_length_choice)
+    length_max = random.choice(length_max_choice)
 
     image = np.array(clean_image)
 
@@ -470,10 +387,13 @@ def create_augmented_pair_hole_filling(clean_image):
     return Image.fromarray(eroded)
 
 
-def create_augmented_pair_smushing(clean_image, factor=0.3):
+def create_augmented_pair_smushing(clean_image, factor_choice=(0.4,0.5,0.6)):
+    # After initial testing, we found that a factor of 0.3 was too much and made characters too unrecognizable,
+    # thus we switched to 0.6
     # For stretching : factor > 1, for smushing : factor < 1    
     image = np.array(clean_image)
     height, width = image.shape
+    factor = random.choice(factor_choice)
     compressed_width = int(width * factor)
     
     # Resize using cv2
@@ -484,7 +404,7 @@ def create_augmented_pair_smushing(clean_image, factor=0.3):
     return Image.fromarray(compressed_img)
 
 
-def create_augmented_pair_rotation(clean_image):
+def create_augmented_pair_rotation(clean_image, rotation_strength = (-7,7)):
     # Rotate image 
     image = np.array(clean_image)
 
@@ -492,7 +412,7 @@ def create_augmented_pair_rotation(clean_image):
     # we can in the end then just invert again 
     image = cv2.bitwise_not(image)
 
-    augmenter = iaa.Rotate((-5, 5))
+    augmenter = iaa.Rotate(rotate= rotation_strength)
 
     image = augmenter(image=image)
 
@@ -502,35 +422,51 @@ def create_augmented_pair_rotation(clean_image):
     return Image.fromarray(image)
 
 
-def create_augmented_pair_blur(clean_image):
+def create_augmented_pair_blur(clean_image, mode = 'noisy'):
     """Create noisy versions based on blur"""
 
     image = np.array(clean_image)
 
-    augmenter = iaa.Sequential(
-        # Camera and motion effects
-        iaa.OneOf([
-            # Motion blur for vehicle movement
-            iaa.MotionBlur(k=(7, 15), angle=(-45, 45)),
-            # Camera shake and focus issues
-            iaa.GaussianBlur(sigma=(0.5, 3.0)),
-            # Defocus blur
-            iaa.AverageBlur(k=(2, 5))
-        ]))
+    if mode == 'noisy':
+        # Reduced the motion blur values, since it was too much and made the characters unrecognizable
+        augmenter = iaa.Sequential(
+            # Camera and motion effects
+            iaa.OneOf([
+                # Motion blur for vehicle movement
+                iaa.MotionBlur(k=(5,10), angle=(-30, 30)),
+                # Camera shake and focus issues
+                iaa.GaussianBlur(sigma=(0.5, 3.0)),
+                # Defocus blur
+                iaa.AverageBlur(k=(2, 5))
+            ]))
+    else:
+        # For the clean variations, use less strong blur
+        augmenter = iaa.Sequential(
+            # Camera and motion effects
+            iaa.OneOf([
+                # Motion blur for vehicle movement
+                iaa.MotionBlur(k=(3,5), angle=(-15,15)),
+                # Camera shake and focus issues
+                iaa.GaussianBlur(sigma=(0.5, 1.5)),
+                # Defocus blur
+                iaa.AverageBlur(k=(2, 3))
+            ]))
+
 
     image = augmenter(image=image)
 
     return Image.fromarray(image)
 
 
-def create_augmented_pair_elastic_deform(clean_image, alpha=30, sigma=5):
+def create_augmented_pair_elastic_deform(clean_image, alpha_choice=(50,60,70,80,90,100)):
     """Simulate wrinkled/bent plates"""
-    # In general : take alpha like 30- ? (50 until now tested) and sigma between 1-10 
     image = np.array(clean_image)
 
     image = cv2.bitwise_not(image)
-    
-    augmenter = iaa.ElasticTransformation(alpha=alpha, sigma=sigma)
+
+    alpha = random.choice(alpha_choice)
+    # 10:1 ratio according to https://imgaug.readthedocs.io/en/latest/source/api_augmenters_geometric.html#imgaug.augmenters.geometric.ElasticTransformation
+    augmenter = iaa.ElasticTransformation(alpha=alpha, sigma=int(alpha/10))
 
     image = augmenter(image=image)
 
@@ -540,7 +476,269 @@ def create_augmented_pair_elastic_deform(clean_image, alpha=30, sigma=5):
 
     return Image.fromarray(image)
 
+'''
 
+def clean_pipeline(clean_image):
+    """Pipeline to create variations of the clean images"""
+
+    augmented_image = clean_image
+
+    augmentation_params = {'create_augmented_pair_imagequality' : {'compression_strength': (30,50)}, 
+                                  'create_augmented_pair_rotation' : {'rotation_strength': (-3,3)},
+                                  'create_augmented_pair_blur' : {'mode': 'clean'},
+                                  'create_augmented_pair_edge_roughness' : {'strength_roughness_choice': (2,3,4)}}
+    
+    augmentation_possibilities = list(augmentation_params.keys())
+
+    # Always apply atleast one 
+    num_initial_augs = random.randint(1, 4)
+    selected_initial = random.sample(augmentation_possibilities, num_initial_augs)
+
+    # If edge roughness is selected, select it as the first one, as it works on a contour algorithm
+    # (thus, if something else is first, might create some new dots and then it messes up the contour algorithm)
+    if 'created_augmented_pair_edge_roughness' in selected_initial:
+        selected_initial.remove('create_augmented_pair_edge_roughness')
+        selected_initial.insert(0, 'create_augmented_pair_edge_roughness') 
+
+
+    for aug_func_name in selected_initial:
+        # Get the function from globals and apply it
+        aug_func = globals()[aug_func_name]
+        params = augmentation_params[aug_func_name]
+        augmented_image = aug_func(augmented_image, **params)
+
+    return augmented_image
+'''
+
+
+def get_all_clean_combinations(augmentation_possibilities):
+    """Generate all possible clean augmentation combinations (1-4 augmentations)"""
+    all_combinations = []
+    for r in range(1, 5):  # 1 to 4 augmentations
+        all_combinations.extend(list(itertools.combinations(augmentation_possibilities, r)))
+    return all_combinations
+
+def clean_pipeline(clean_image, char, path, n_examples = 10):
+    """
+    Creates all possible clean variation combinations and generates multiple examples
+    for each combination, with preprocessing validation and character-specific subdirectories.
+    """
+    augmentation_params = {
+        'create_augmented_pair_imagequality': {'compression_strength': (30,50)}, 
+        'create_augmented_pair_rotation': {'rotation_strength': (-3,3)},
+        'create_augmented_pair_blur': {'mode': 'clean'},
+        'create_augmented_pair_edge_roughness': {'strength_roughness_choice': (2,3,4)}
+    }
+    
+    augmentation_possibilities = list(augmentation_params.keys())
+    
+    # Get all possible combinations (always at least one augmentation)
+    all_combinations = get_all_clean_combinations(augmentation_possibilities)
+
+    # Define all possible characters
+    all_characters = list('ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789')
+
+    # Create base directory if it doesn't exist
+    base_path = Path(path)
+    base_path.mkdir(exist_ok=True)
+
+    # Process each combination
+    for combo_idx, combination in enumerate(all_combinations):
+        # Create directory for this combination
+        combo_dir = base_path / f"clean_variation_{combo_idx}"
+        combo_dir.mkdir(exist_ok=True)
+
+        # Create subdirectories for all characters in this variation folder
+        for character in all_characters:
+            char_dir = combo_dir / character
+            char_dir.mkdir(exist_ok=True)
+
+        # Counter for successful generations
+        successful_generations = 0
+        example_idx = 0
+
+        # Continue until we have 10 successful generations
+        while successful_generations < n_examples:
+            augmented_image = clean_image
+            
+            # Convert combination to list for potential reordering
+            augs_to_apply = list(combination)
+            
+            # If edge roughness is in the combination, move it to the front
+            if 'create_augmented_pair_edge_roughness' in augs_to_apply:
+                augs_to_apply.remove('create_augmented_pair_edge_roughness')
+                augs_to_apply.insert(0, 'create_augmented_pair_edge_roughness')
+
+            # Apply the augmentations in order
+            for aug_func_name in augs_to_apply:
+                aug_func = globals()[aug_func_name]
+                params = augmentation_params[aug_func_name]
+                augmented_image = aug_func(augmented_image, **params)
+
+            # Preprocess the augmented image
+            processed_image = preprocessing(augmented_image)
+
+            # Only save if preprocessing was successful
+            if processed_image is not None:
+                # Save the processed image in the character-specific subdirectory
+                output_filename = f"{char}_{successful_generations}.png"
+                output_path = combo_dir / char / output_filename
+                processed_image.save(str(output_path))
+                successful_generations += 1
+            
+            example_idx += 1
+
+    return None
+
+def get_all_possible_combinations(initial_augmentations, combination_options, single_options):
+    """Generate all possible augmentation combinations"""
+    # Get all possible initial combinations (including empty set)
+    initial_combinations = []
+    for r in range(5):  # 0 to 4 augmentations
+        initial_combinations.extend(list(itertools.combinations(initial_augmentations, r)))
+    
+    # Combine with second stage options
+    all_combinations = []
+    
+    # Initial augs + combination options
+    for init in initial_combinations:
+        for combo in combination_options:
+            all_combinations.append((list(init), list(combo)))
+            
+    # Initial augs + single options
+    for init in initial_combinations:
+        for single in single_options:
+            all_combinations.append((list(init), [single]))
+    
+    return all_combinations
+
+def augmentation_pipeline(clean_image, char, path, n_examples = 10):
+    """
+    Creates all possible augmentation combinations and generates multiple examples
+    for each combination, with preprocessing validation.
+    
+    Args:
+        clean_image: Input image to be augmented
+        char: Character being processed
+        path: Base path where to create augmentation folders
+    """
+    # Define parameter ranges for each augmentation
+    augmentation_params = {
+        'create_augmented_pair_imagequality': {'compression_strength': (80,100)},
+        'create_augmented_pair_rotation': {'rotation_strength': (-8,8)},
+        'create_augmented_pair_blur': {'mode': 'noisy'},
+        'create_augmented_pair_smushing': {'factor_choice': (0.4,0.5,0.6)},
+        'create_augmented_pair_hole_filling': {},
+        'create_augmented_pair_perspective_skew': {'scale': (0.05, 0.2)},
+        'create_augmented_pair_thickness': {'area': (8,10)},
+        'create_augmented_pair_elastic_deform': {'alpha_choice': (50,60,70,80,90,100)},
+        'create_augmented_pair_occlusion': {
+            'n_segments_choice': (7,8,9,10,11,12),
+            'segment_length_choice': (7,8,9,10,11,12),
+            'length_max_choice': tuple(np.arange(150, 200, 1))
+        },
+        'create_augmented_pair_edge_roughness': {'strength_roughness_choice': (6,7,8,9,10,11)}
+    }
+
+    # Define augmentation sets
+    initial_augmentations = [
+        'create_augmented_pair_imagequality',
+        'create_augmented_pair_rotation',
+        'create_augmented_pair_blur',
+        'create_augmented_pair_edge_roughness'
+    ]
+    
+    combination_options = [
+        ['create_augmented_pair_smushing', 'create_augmented_pair_hole_filling'],
+        ['create_augmented_pair_perspective_skew', 'create_augmented_pair_thickness'],
+        ['create_augmented_pair_thickness', 'create_augmented_pair_occlusion'],
+        ['create_augmented_pair_elastic_deform', 'create_augmented_pair_occlusion']
+    ]
+    
+    single_options = [
+        'create_augmented_pair_smushing',
+        'create_augmented_pair_hole_filling',
+        'create_augmented_pair_perspective_skew',
+        'create_augmented_pair_thickness',
+        'create_augmented_pair_elastic_deform',
+        'create_augmented_pair_occlusion',
+    ]
+
+    # Get all possible combinations
+    all_combinations = get_all_possible_combinations(
+        initial_augmentations, 
+        combination_options, 
+        single_options
+    )
+
+    # Define all possible characters
+    all_characters = list('ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789')
+
+    # Create base directory if it doesn't exist
+    base_path = Path(path)
+    base_path.mkdir(exist_ok=True)
+
+    # Process each combination
+    for combo_idx, (initial_augs, second_stage) in enumerate(all_combinations):
+        # Create directory for this combination
+        combo_dir = base_path / f"augmentation_m_{combo_idx}"
+        combo_dir.mkdir(exist_ok=True)
+
+        # Create subdirectories for all characters in this augmentation folder
+        for character in all_characters:
+            char_dir = combo_dir / character
+            char_dir.mkdir(exist_ok=True)
+
+        # Counter for successful generations
+        successful_generations = 0
+        example_idx = 0
+
+        # Continue until we have 10 successful generations
+        while successful_generations < n_examples:
+            augmented_image = clean_image
+
+            # Apply initial augmentations (if any)
+            for aug_name in initial_augs:
+                # Handle edge_roughness first if present
+                if 'create_augmented_pair_edge_roughness' in initial_augs:
+                    initial_augs.remove('create_augmented_pair_edge_roughness')
+                    initial_augs.insert(0, 'create_augmented_pair_edge_roughness')
+                
+                aug_func = globals()[aug_name]
+                params = augmentation_params[aug_name]
+                augmented_image = aug_func(augmented_image, **params)
+
+            # Apply second stage augmentations
+            for aug_name in second_stage:
+                aug_func = globals()[aug_name]
+                params = augmentation_params[aug_name]
+                augmented_image = aug_func(augmented_image, **params)
+
+            # Check if elastic deform needs to be added
+            has_elastic = any('elastic_deform' in aug for aug in initial_augs + second_stage)
+            if not has_elastic:
+                aug_name = 'create_augmented_pair_elastic_deform'
+                aug_func = globals()[aug_name]
+                params = augmentation_params[aug_name]
+                augmented_image = aug_func(augmented_image, **params)
+
+            # Preprocess the augmented image
+            processed_image = preprocessing(augmented_image)
+
+            # Only save if preprocessing was successful
+            if processed_image is not None:
+                # Save the processed image in the character-specific subdirectory
+                output_filename = f"{char}_{successful_generations}.png"
+                output_path = combo_dir / char / output_filename  # Note the added char subdirectory
+                processed_image.save(str(output_path))
+                successful_generations += 1
+            
+            example_idx += 1
+
+    return None  # No need to return anything as images are saved directly
+
+
+'''
 def augmentation_pipeline(clean_image,char, i):
     """
     Applies a series of augmentations to an image according to specific rules:
@@ -553,19 +751,37 @@ def augmentation_pipeline(clean_image,char, i):
     Returns:
         Augmented image after pipeline processing
     """
+
+    # Define parameter ranges for each augmentation
+    augmentation_params = {
+        'create_augmented_pair_imagequality': {'compression_strength': (80,100)},
+        'create_augmented_pair_rotation': {'rotation_strength': (-8,8)},
+        'create_augmented_pair_blur': {'mode': 'noisy'},
+        'create_augmented_pair_smushing': {'factor_choice': (0.4,0.5,0.6)},
+        'create_augmented_pair_hole_filling': {},
+        'create_augmented_pair_perspective_skew': {'scale': (0.05, 0.2)},
+        'create_augmented_pair_thickness': {'area': (8,10)},
+        'create_augmented_pair_elastic_deform': {'alpha_choice': (50,60,70,80,90,100)},
+        'create_augmented_pair_occlusion': {'n_segments_choice': (7,8,9,10,11,12), 'segment_length_choice': (7,8,9,10,11,12), 'length_max_choice': tuple(np.arange(150, 200, 1))},
+        'create_augmented_pair_edge_roughness': {'strength_roughness_choice': (6,7,8,9,10,11)}
+    }
+
+
     # Initial augmentation options
     initial_augmentations = [
         'create_augmented_pair_imagequality',
         'create_augmented_pair_rotation',
-        'create_augmented_pair_blur'
+        'create_augmented_pair_blur',
+        'create_augmented_pair_edge_roughness' # Need to be here so we can use it as first
     ]
     
     # Predefined combinations for second stage
     combination_options = [
         ['create_augmented_pair_smushing', 'create_augmented_pair_hole_filling'],
         ['create_augmented_pair_perspective_skew', 'create_augmented_pair_thickness'],
-        ['create_augmented_pair_smushing', 'create_augmented_pair_occlusion'],
+        ['create_augmented_pair_thickness', 'create_augmented_pair_occlusion'],
         ['create_augmented_pair_elastic_deform', 'create_augmented_pair_occlusion']
+
     ]
     
     # Additional single augmentation options for second stage
@@ -575,7 +791,7 @@ def augmentation_pipeline(clean_image,char, i):
         'create_augmented_pair_perspective_skew',
         'create_augmented_pair_thickness',
         'create_augmented_pair_elastic_deform',
-        'create_augmented_pair_occlusion'
+        'create_augmented_pair_occlusion',
     ]
     
     # Initialize the image variable
@@ -583,7 +799,7 @@ def augmentation_pipeline(clean_image,char, i):
 
     applications = str.upper(char) + "_" + str(i) + ".png : "
   #  print("STARTED")
-    
+
     in_starter = False
     in_second_stage = False
     in_solo = False
@@ -591,11 +807,19 @@ def augmentation_pipeline(clean_image,char, i):
     num_initial_augs = random.randint(0, 3)
     if num_initial_augs > 0:
         selected_initial = random.sample(initial_augmentations, num_initial_augs)
+        # Select as first if it exists due to it using contour algorithm that messes up after other augmentations
+        if 'create_augmented_pair_edge_roughness' in selected_initial:
+            selected_initial.remove('create_augmented_pair_edge_roughness')
+            selected_initial.insert(0, 'create_augmented_pair_edge_roughness')
     #    print(f"Selected initial augmentations: {selected_initial}")
         for aug_func_name in selected_initial:
             # Get the function from globals and apply it
             aug_func = globals()[aug_func_name]
-            augmented_image = aug_func(augmented_image)
+            params = augmentation_params[aug_func_name]
+            augmented_image = aug_func(augmented_image, **params)
+
+
+
             applications += aug_func_name + " "
             if aug_func_name == 'create_augmented_pair_elastic_deform':
                 in_starter = True
@@ -609,7 +833,8 @@ def augmentation_pipeline(clean_image,char, i):
             # Apply single augmentation
             selected_aug = random.choice(single_options)
             aug_func = globals()[selected_aug]
-            augmented_image = aug_func(augmented_image)
+            params = augmentation_params[selected_aug]
+            augmented_image = aug_func(augmented_image, **params)
      #       print(f"Applied single augmentation: {selected_aug}")
             applications += selected_aug + " "
             if aug_func == 'create_augmented_pair_elastic_deform':
@@ -619,7 +844,8 @@ def augmentation_pipeline(clean_image,char, i):
             selected_combo = random.choice(combination_options)
             for aug_func_name in selected_combo:
                 aug_func = globals()[aug_func_name]
-                augmented_image = aug_func(augmented_image)
+                params = augmentation_params[aug_func_name]
+                augmented_image = aug_func(augmented_image, **params)
                 applications += aug_func_name + " "
       #      print(f"Applied combination: {selected_combo}")
             if 'create_augmented_pair_elastic_deform' in selected_combo:
@@ -627,10 +853,15 @@ def augmentation_pipeline(clean_image,char, i):
     
     # Finally, apply elastic deformation with high probability if not already applied
     if not in_starter and not in_second_stage and not in_solo:
-        if random.random() < 0.8:
-            augmented_image = create_augmented_pair_elastic_deform(augmented_image, alpha=50, sigma=5)
-            applications += "create_augmented_pair_elastic_deform"
-  
+       # Always apply elastic deformation at the end ; it helps making the character much more seem like it was extracted 
+       # from actual noise
+       aug_func_name = 'create_augmented_pair_elastic_deform'
+       aug_func = globals()[aug_func_name]
+       params = augmentation_params[aug_func_name]
+       augmented_image = aug_func(augmented_image, **params)
+       applications += aug_func_name + " "
+
+
 
         
   #  print("ENDED")
@@ -638,7 +869,7 @@ def augmentation_pipeline(clean_image,char, i):
 
 
     return augmented_image, applications
-
+'''
 
 def create_directories(output_dir):
     # Define character set (German license plates)
@@ -725,69 +956,6 @@ def preprocessing(image):
 
 
 
-    '''
-    # Apply canny edge detection, for contours 
-    canny = cv2.Canny(image, 100, 200)
-
-
-
-
-    contours, _ = cv2.findContours(canny, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-
-
-   # Get all the areas of the contours
-    areas = [cv2.contourArea(contour) for contour in contours]
-    # Get the max area (since we have black surrounding and white character, the character will have the biggest area)
-    max_area = max(areas)
-
-
-    correct_img = None 
-    for contour in sorted(contours, key=lambda x: cv2.boundingRect(x)[0]):
-        x, y, w, h = cv2.boundingRect(contour)
-   
-        area = cv2.contourArea(contour)
-        if area == max_area:
-
-
-            reg_of_interest = image[y:y+h, x:x+w] # region of interest : the rectangle area that we found
-
-         
-
-
-
-   
-            # Calculate scaling factor to fit in 20x20 box while maintaining aspect ratio
-            scale = min(20.0/w, 20.0/h)
-            new_w = int(w * scale)
-            new_h = int(h * scale)
-            
-            # Resize character to fit in 20x20 box
-            try:
-                char_resized = cv2.resize(reg_of_interest, (new_w, new_h))
-            except cv2.error as e:
-                print('Error resizing the image ; skipping this image :', e)
-                return None 
-            
-            # Create 28x28 blank (black) image
-            mnist_size = np.zeros((28, 28), dtype=np.uint8)
-            
-            # Calculate position to center character
-            x_offset = (28 - new_w) // 2
-            y_offset = (28 - new_h) // 2
-            
-            # Place character in center of 28x28 image
-            mnist_size[y_offset:y_offset+new_h, x_offset:x_offset+new_w] = char_resized
-            correct_img = mnist_size
-
-        
-    cv2.imshow('correct_img', correct_img)
-    cv2.waitKey(0)
-    cv2.destroyAllWindows()
-   # exit()
-
-    return Image.fromarray(correct_img)
-    '''
-
 
 def generate_dataset(output_dir, font_path):
     """Generate dataset of clean and noisy character images"""
@@ -811,31 +979,38 @@ def generate_dataset(output_dir, font_path):
         # Generate clean image (just one since it's always the same ; TODO : possibly in different sizes could help, since license plate may be from diff perspectives?)
         clean_image = generate_single_character(char, font_path)
         # Preprocess image
-        clean_image_processed = preprocessing(clean_image)
-        clean_image_processed.save(clean_dir + f'/{char}/' + f'{char}_original.png')
+     #   clean_image_processed = preprocessing(clean_image)
+     #   clean_image_processed.save(clean_dir + f'/{char}/' + f'{char}_original.png')
+        clean_pipeline(clean_image, char, clean_dir, n_examples=10)
 
-        for i in range(100):  # Generate 100 augmented versions of each character
+     #   for i in range(100):  # Generate 100 clean versions
             # Generate clean variations
-            clean_variation = create_clean_variations(clean_image)
-            # Preprocess image
-            clean_variation_processed = preprocessing(clean_variation)
+        #    clean_image_processed = None
+      #      while clean_image_processed == None:
+
+         #       clean_variation = clean_pipeline(clean_image)
+        #        clean_image_processed = preprocessing(clean_variation)
+
+
             # Save images
-            clean_variation_processed.save(clean_dir + f'/{char}/' + f'{char}_{i}.png')
-            # Generate corresponding noisy image
+        #    clean_image_processed.save(clean_dir + f'/{char}/' + f'{char}_{i}.png')
             
-            # Preprocess image
-            noisy_image_processed = None
-            while noisy_image_processed == None:
-                noisy_image, application = augmentation_pipeline(clean_image, char, i)
-                noisy_image_processed = preprocessing(noisy_image)
+     #   for i in range(100):
+            # Generate corresponding noisy image
+        #    noisy_image_processed = None
+         #   while noisy_image_processed == None:
+
+
+        augmentation_pipeline(clean_image, char, noisy_dir, n_examples=10)
+           #     noisy_image_processed = preprocessing(noisy_image)
                 # Save applications
-                with open(noisy_dir + '/applications.txt', 'a') as f:
-                    f.write(application + '\n')
+             #   with open(noisy_dir + '/applications.txt', 'a') as f:
+             #       f.write(application + '\n')
 
 
 
             # Save images
-            noisy_image_processed.save(noisy_dir + f'/{char}/' + f'{char}_{i}.png')
+         #   noisy_image_processed.save(noisy_dir + f'/{char}/' + f'{char}_{i}.png')
 
 
 
