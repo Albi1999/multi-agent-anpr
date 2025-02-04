@@ -63,7 +63,7 @@ def get_footer():
             "backgroundColor": "#333333",
             "color": "#fff"
         },
-        children=html.P("Developed by Alberto Calabrese, Marlon Helbing, and Daniele Virzì, 2025", style={"margin": 0})
+        children=html.P("Developed by Alberto Calabrese, Marlon Helbing and Daniele Virzì, 2025", style={"margin": 0})
     )
 
 # Upload page layout: header without back button, central upload area, and footer.
@@ -146,8 +146,7 @@ main_layout = html.Div(
                                 "backgroundColor": "#28a745",
                                 "color": "#fff",
                                 "border": "none",
-                                "borderRadius": "5px",
-                                "marginTop": "20px"
+                                "borderRadius": "5px"
                             }
                         ),
                         html.Div(
@@ -169,7 +168,6 @@ main_layout = html.Div(
                                         "color": "#fff",
                                         "border": "none",
                                         "borderRadius": "5px",
-                                        "marginTop": "10px",
                                         "marginRight": "2%"
                                     }
                                 ),
@@ -183,8 +181,7 @@ main_layout = html.Div(
                                         "backgroundColor": "#8a00dc",
                                         "color": "#fff",
                                         "border": "none",
-                                        "borderRadius": "5px",
-                                        "marginTop": "10px"
+                                        "borderRadius": "5px"
                                     }
                                 ),
                                 html.Button(
@@ -246,8 +243,7 @@ main_layout = html.Div(
                                         "backgroundColor": "#17a2b8",
                                         "color": "#fff",
                                         "border": "none",
-                                        "borderRadius": "5px",
-                                        "marginTop": "10px"
+                                        "borderRadius": "5px"
                                     }
                                 ),
                                 html.Button(
@@ -320,7 +316,7 @@ main_layout = html.Div(
                         "textAlign": "center"
                     },
                     children=[
-                        html.H3("Image Preview", style={"textAlign": "center", "color": "#fff"}),
+                        html.H2("Image Preview", style={"textAlign": "center", "color": "#fff"}),
                         html.Div(id='image-display', style={"marginTop": "20px"}),
                         html.Div(
                             style={

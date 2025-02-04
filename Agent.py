@@ -616,34 +616,39 @@ class LicensePlateAgent:
         if self.step == 0:
             os.makedirs('process', exist_ok=True)
         self.step += 1
-        self.max_steps = self.step
-        
+        # Only increase max_steps if we are not undoing
+        if self.step > self.max_steps:
+            self.max_steps = self.step
         # Save the image to the process folder
         img = Image.open(self.current_image_path)
         new_path = f'process/step_{self.step}.png'
         self.current_image_path = new_path
         img.save(new_path)
         return new_path
+
     
-    def go_back(self, step = 1):
+    def go_back(self, step=1):
         """Go back to the previous step by loading the previous image."""
-        if self.step - step > 1:
-            self.step -= 1
+        if self.step - step >= 1:
+            self.step -= step
             self.current_image_path = f'process/step_{self.step}.png'
         else:
+            self.step = 1  # Ensure we don't go below the first step
             self.current_image_path = f'process/step_{self.step}.png'
             print("You have reached the first step.")
         return self.current_image_path
 
-    def go_forward(self, step = 1):
+    def go_forward(self, step=1):
         """Go forward to the next step by loading the next image."""
-        if self.step + step < self.max_steps:
-            self.step += 1
+        if self.step + step <= self.max_steps:
+            self.step += step
             self.current_image_path = f'process/step_{self.step}.png'
         else:
+            self.step = self.max_steps  # Ensure we don't go beyond the last step
             self.current_image_path = f'process/step_{self.step}.png'
             print("You have reached the last step.")
         return self.current_image_path
+
 
     def restart(self):
         """Restart the agent by clearing the image path."""
